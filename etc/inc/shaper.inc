@@ -2017,8 +2017,6 @@ class hfsc_queue extends priq_queue {
 	function wconfig() {
 		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
-		if (!is_array($cflink))
-			$cflink = array();
 		$cflink['bandwidth'] = $this->GetBandwidth();
 		$cflink['bandwidthtype'] = $this->GetBwscale();
 		if ($this->GetLinkshare() <> "") {
@@ -2411,8 +2409,6 @@ class cbq_queue extends priq_queue {
 	function wconfig() {
 		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
-		if (!is_array($cflink))
-			$cflink = array();
 		$cflink['bandwidth'] = $this->GetBandwidth();
 		$cflink['bandwidthtype'] = $this->GetBwscale();
 		$cflink['borrow'] = trim($this->GetBorrow());
@@ -2664,8 +2660,6 @@ class fairq_queue extends priq_queue {
 	function wconfig() {
 		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
-		if (!is_array($cflink))
-			$cflink = array();
 		$cflink['bandwidth'] = $this->GetBandwidth();
 		$cflink['bandwidthtype'] = $this->GetBwscale();
 		$cflink['buckets'] = trim($this->GetBuckets());
@@ -2861,7 +2855,24 @@ class dummynet_class {
 			}
 		}            
 	}
-        
+
+	protected function wconfig() {
+		$cflink =& get_dn_reference_to_me_in_config($this->GetLink());
+		if (!is_array($cflink))
+			$cflink = array();
+
+		$cflink['name'] = $this->GetQname();
+		$cflink['number'] = $this->GetNumber();
+		$cflink['qlimit'] = $this->GetQlimit();
+		$cflink['description'] = $this->GetDescription();
+		$cflink['enabled'] = $this->GetEnabled();
+		$cflink['plr'] = $this->GetPlr();
+		$cflink['buckets'] = $this->GetBuckets();
+		$mask = $this->GetMask();
+		$cflink['mask'] = $mask['type'];
+		$cflink['maskbits'] = $mask['bits'];
+		$cflink['maskbitsv6'] = $mask['bitsv6'];
+	}
 }
 
 class dnpipe_class extends dummynet_class {
@@ -3379,15 +3390,8 @@ EOD;
 		}
 
 	function wconfig() {
+		parent::wconfig();
 		$cflink =& get_dn_reference_to_me_in_config($this->GetLink());
-            	if (!is_array($cflink))
-            		$cflink = array();
-		$cflink['name'] = $this->GetQname();
-		$cflink['number'] = $this->GetNumber();
-            	$cflink['qlimit'] = $this->GetQlimit();
-            	$cflink['plr'] = $this->GetPlr();
-            	$cflink['description'] = $this->GetDescription();
-               
 		$bandwidth = $this->GetBandwidth();
 		if (is_array($bandwidth)) {
 			$cflink['bandwidth'] = array();
@@ -3395,13 +3399,6 @@ EOD;
 			foreach ($bandwidth as $bwidx => $bw)
 				$cflink['bandwidth']['item'][] = $bw;
 		}
-
-		$cflink['enabled'] = $this->GetEnabled();
-		$cflink['buckets'] = $this->GetBuckets();
-		$mask = $this->GetMask();
-		$cflink['mask'] = $mask['type'];
-		$cflink['maskbits'] = $mask['bits'];
-                $cflink['maskbitsv6'] = $mask['bitsv6'];
 		$cflink['delay'] = $this->GetDelay();
 	}
 
@@ -3658,20 +3655,9 @@ class dnqueue_class extends dummynet_class {
 	}
 
 	function wconfig() {
+		parent::wconfig();
 		$cflink =& get_dn_reference_to_me_in_config($this->GetLink());
-            	if (!is_array($cflink))
-            		$cflink = array();
-		$cflink['name'] = $this->GetQname();
-		$cflink['number'] = $this->GetNumber();
-            	$cflink['qlimit'] = $this->GetQlimit();
-            	$cflink['description'] = $this->GetDescription();
 		$cflink['weight'] = $this->GetWeight();
-		$cflink['enabled'] = $this->GetEnabled();
-		$cflink['buckets'] = $this->GetBuckets();
-		$mask = $this->GetMask();
-		$cflink['mask'] = $mask['type'];
-		$cflink['maskbits'] = $mask['bits'];
-                $cflink['maskbitsv6'] = $mask['bitsv6'];
 	}
 }
 
