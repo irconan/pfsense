@@ -2015,40 +2015,12 @@ class hfsc_queue extends priq_queue {
 	}
 
 	function wconfig() {
+		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
 		if (!is_array($cflink))
 			$cflink = array();
-		$cflink['name'] = $this->GetQname();
-		$cflink['interface'] = $this->GetInterface();
-		$cflink['qlimit'] = trim($this->GetQlimit());
-		if (empty($cflink['qlimit']))
-			unset($cflink['qlimit']);
-		$cflink['priority'] = $this->GetQpriority();
-		if (empty($cflink['priority']))
-			unset($cflink['priority']);
-		$cflink['description'] = $this->GetDescription();
-		if (empty($cflink['description']))
-			unset($cflink['description']);
 		$cflink['bandwidth'] = $this->GetBandwidth();
 		$cflink['bandwidthtype'] = $this->GetBwscale();
-		$cflink['enabled'] = $this->GetEnabled();
-		if (empty($cflink['enabled']))
-			unset($cflink['enabled']);
-		$cflink['default'] = $this->GetDefault();
-		if (empty($cflink['default']))
-			unset($cflink['default']);
-		$cflink['red'] = trim($this->GetRed());
-		if (empty($cflink['red']))
-			unset($cflink['red']);
-		$cflink['rio'] = $this->GetRio();
-		if (empty($cflink['rio']))
-			unset($cflink['rio']);
-		$cflink['ecn'] = trim($this->GetEcn());
-		if (empty($cflink['ecn']))
-			unset($cflink['ecn']);
-		$cflink['codel'] = trim($this->GetCodel());
-		if (empty($cflink['codel']))
-			unset($cflink['codel']);
 		if ($this->GetLinkshare() <> "") {
 			if ($this->GetL_m1() <> "") {
 				$cflink['linkshare1'] = $this->GetL_m1();
@@ -2437,40 +2409,12 @@ class cbq_queue extends priq_queue {
 	}
 
 	function wconfig() {
+		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
 		if (!is_array($cflink))
 			$cflink = array();
-		$cflink['interface'] = $this->GetInterface();
-		$cflink['qlimit'] = trim($this->GetQlimit());
-		if (empty($cflink['qlimit']))
-			unset($cflink['qlimit']);
-		$cflink['priority'] = $this->GetQpriority();
-		if (empty($cflink['priority']))
-			unset($cflink['priority']);
-		$cflink['name'] = $this->GetQname();
-		$cflink['description'] = $this->GetDescription();
-		if (empty($cflink['description']))
-			unset($cflink['description']);
 		$cflink['bandwidth'] = $this->GetBandwidth();
 		$cflink['bandwidthtype'] = $this->GetBwscale();
-		$cflink['enabled'] = trim($this->GetEnabled());
-		if (empty($cflink['enabled']))
-			unset($cflink['enabled']);
-		$cflink['default'] = trim($this->GetDefault());
-		if (empty($cflink['default']))
-			unset($cflink['default']);
-		$cflink['red'] = trim($this->GetRed());
-		if (empty($cflink['red']))
-			unset($cflink['red']);
-		$cflink['rio'] = trim($this->GetRio());
-		if (empty($cflink['rio']))
-			unset($cflink['rio']);
-		$cflink['ecn'] = trim($this->GetEcn());
-		if (empty($cflink['ecn']))
-			unset($cflink['ecn']);
-		$cflink['codel'] = trim($this->GetCodel());
-		if (empty($cflink['codel']))
-			unset($cflink['codel']);
 		$cflink['borrow'] = trim($this->GetBorrow());
 		if (empty($cflink['borrow']))
 			unset($cflink['borrow']);
@@ -2718,40 +2662,12 @@ class fairq_queue extends priq_queue {
 	}
 
 	function wconfig() {
+		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
 		if (!is_array($cflink))
 			$cflink = array();
-		$cflink['interface'] = $this->GetInterface();
-		$cflink['qlimit'] = trim($this->GetQlimit());
-		if (empty($cflink['qlimit']))
-			unset($cflink['qlimit']);
-		$cflink['priority'] = trim($this->GetQpriority());
-		if (empty($cflink['priority']))
-			unset($cflink['priority']);
-		$cflink['name'] = $this->GetQname();
-		$cflink['description'] = trim($this->GetDescription());
-		if (empty($cflink['description']))
-			unset($cflink['description']);
 		$cflink['bandwidth'] = $this->GetBandwidth();
 		$cflink['bandwidthtype'] = $this->GetBwscale();
-		$cflink['enabled'] = $this->GetEnabled();
-		if (empty($cflink['enabled']))
-			unset($cflink['enabled']);
-		$cflink['default'] = trim($this->GetDefault());
-		if (empty($cflink['default']))
-			unset($cflink['default']);
-		$cflink['red'] = trim($this->GetRed());
-		if (empty($cflink['red']))
-			unset($cflink['red']);
-		$cflink['rio'] = trim($this->GetRio());
-		if (empty($cflink['rio']))
-			unset($cflink['rio']);
-		$cflink['ecn'] = trim($this->GetEcn());
-		if (empty($cflink['ecn']))
-			unset($cflink['ecn']);
-		$cflink['codel'] = trim($this->GetCodel());
-		if (empty($cflink['codel']))
-			unset($cflink['codel']);
 		$cflink['buckets'] = trim($this->GetBuckets());
 		if (empty($cflink['buckets']))
 			unset($cflink['buckets']);
