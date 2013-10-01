@@ -2856,6 +2856,39 @@ class dummynet_class {
 		}            
 	}
 
+	protected function ReadConfig(&$q) {
+		if (!empty($q['name']) && !empty($q['newname']) && $q['name'] != $q['newname']) {
+			$this->SetQname($q['newname']);
+		} else if (!empty($q['newname'])) {
+			$this->SetQname($q['newname']);
+		} else {
+			$this->SetQname($q['name']);
+		}
+		$this->SetNumber($q['number']);
+		if (isset($q['qlimit']) && $q['qlimit'] <> "")
+			$this->SetQlimit($q['qlimit']);
+		else
+			$this->SetQlimit("");
+		if (isset($q['mask']) && $q['mask'] <> "")
+			$masktype = $q['mask'];
+		else
+			$masktype = "";
+		if (isset($q['maskbits']) && $q['maskbits'] <> "")
+			$maskbits = $q['maskbits'];
+		else
+			$maskbits = "";
+		if (isset($q['maskbitsv6']) && $q['maskbitsv6'] <> "")
+			$maskbitsv6 = $q['maskbitsv6'];
+		else
+			$maskbitsv6 = "";
+		$this->SetMask(array("type" => $masktype, "bits" => $maskbits, "bitsv6" => $maskbitsv6));
+		if (isset($q['description']) && $q['description'] <> "")
+			$this->SetDescription($q['description']);
+		else
+			$this->SetDescription("");
+		$this->SetEnabled($q['enabled']);
+	}
+
 	protected function wconfig() {
 		$cflink =& get_dn_reference_to_me_in_config($this->GetLink());
 		if (!is_array($cflink))
@@ -2996,15 +3029,7 @@ class dnpipe_class extends dummynet_class {
 	}
 
 	function ReadConfig(&$q) {
-		if (!empty($q['name']) && !empty($q['newname']) && $q['name'] != $q['newname']) {
-			$this->SetQname($q['newname']);
-		} else if (!empty($q['newname'])) {
-			$this->SetQname($q['newname']);
-		} else {
-			$this->SetQname($q['name']);
-		}
-		$this->SetNumber($q['number']);
-
+		parent::ReadConfig($q);
 		if (!empty($_POST)) {
 			$bandwidth = array();
 			for ($i = 0; $i < 30; $i++) {
@@ -3026,24 +3051,6 @@ class dnpipe_class extends dummynet_class {
 			$this->SetBandwidth($q['bandwidth']['item']);
 			$this->SetBurst($q['burst']['item']);
 		}
-			
-		if (isset($q['qlimit']) && $q['qlimit'] <> "")
-              		$this->SetQlimit($q['qlimit']);
-		else
-              		$this->SetQlimit("");
-		if (isset($q['mask']) && $q['mask'] <> "")
-			$masktype = $q['mask'];
-		else
-			$masktype = "";
-		if (isset($q['maskbits']) && $q['maskbits'] <> "")
-			$maskbits = $q['maskbits'];
-		else
-			$maskbits = "";
-		if (isset($q['maskbitsv6']) && $q['maskbitsv6'] <> "")
-			$maskbitsv6 = $q['maskbitsv6'];
-		else
-			$maskbitsv6 = "";
-		$this->SetMask(array("type" => $masktype, "bits" => $maskbits, "bitsv6" => $maskbitsv6));
 		if (isset($q['buckets']) && $q['buckets'] <> "")
               		$this->SetBuckets($q['buckets']);
 		else
@@ -3056,11 +3063,6 @@ class dnpipe_class extends dummynet_class {
             		$this->SetDelay($q['delay']);
 		else
 			$this->SetDelay(0);
-            	if (isset($q['description']) && $q['description'] <> "")
-			$this->SetDescription($q['description']);
-		else
-			$this->SetDescription("");
-		$this->SetEnabled($q['enabled']);
 
         }
 
@@ -3459,40 +3461,11 @@ class dnqueue_class extends dummynet_class {
         }		
 
 	function ReadConfig(&$q) {
-		if (!empty($q['name']) && !empty($q['newname']) && $q['name'] != $q['newname']) {
-			$this->SetQname($q['newname']);
-		} else if (!empty($q['newname'])) {
-			$this->SetQname($q['newname']);
-		} else {
-			$this->SetQname($q['name']);
-		}
-		$this->SetNumber($q['number']);
-		if (isset($q['qlimit']) && $q['qlimit'] <> "")
-       		       	$this->SetQlimit($q['qlimit']);
-		else
-       		       	$this->SetQlimit("");
-		if (isset($q['mask']) && $q['mask'] <> "")
-			$masktype = $q['mask'];
-		else
-			$masktype = "";
-		if (isset($q['maskbits']) && $q['maskbits'] <> "")
-			$maskbits = $q['maskbits'];
-		else
-			$maskbits = "";
-		if (isset($q['maskbitsv6']) && $q['maskbitsv6'] <> "")
-			$maskbitsv6 = $q['maskbitsv6'];
-		else
-			$maskbitsv6 = "";
-		$this->SetMask(array("type" => $masktype, "bits" => $maskbits, "bitsv6" => $maskbitsv6));
+		parent::ReadConfig($q);
        		if (isset($q['weight']) && $q['weight'] <> "")
             		$this->SetWeight($q['weight']);
 		else
             		$this->SetWeight("");
-            	if (isset($q['description']) && $q['description'] <> "")
-			$this->SetDescription($q['description']);
-		else
-			$this->SetDescription("");
-		$this->SetEnabled($q['enabled']);
         }
 
 	function build_tree() {
