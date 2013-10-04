@@ -1695,6 +1695,7 @@ class hfsc_queue extends priq_queue {
 	}
 
 	function ReadConfig(&$cflink) {
+		parent::ReadConfig($cflink);
 		if (!empty($cflink['linkshare'])) {
 			if (!empty($cflink['linkshare1'])) {
 				$this->SetL_m1($cflink['linkshare1']);
@@ -1743,7 +1744,6 @@ class hfsc_queue extends priq_queue {
 			}
 		} else
 			$this->DisableUpperlimit();
-		parent::ReadConfig($cflink);
 	}
 
 	function build_tree() {
