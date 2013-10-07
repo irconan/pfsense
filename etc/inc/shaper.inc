@@ -753,6 +753,8 @@ class altq_root_queue {
 }
 
 class priq_queue {
+	const QTYPE='priq';
+
 	var $qname;
 	var $qinterface; 
 	var $qlimit;
@@ -925,35 +927,36 @@ class priq_queue {
 		return $javascript;
 	}
 
-	function &add_queue($interface, &$qname, &$path, &$input_errors) { return; }
+	function &add_queue($interface, &$qname, &$path, &$input_errors) {
+		return;
+	}
 
-	/* 
+	/*
 	 * Currently this will not be called unless we decide to clone a whole 
 	 * queue tree on the 'By Queues' view or support drag&drop on the tree/list
 	 */
-	 function copy_queue($interface, &$cflink) {
+	function copy_queue($interface, &$cflink) {
 
  		$cflink['name'] = $this->GetQname();
-                $cflink['interface'] = $interface;
-                $cflink['qlimit'] = $this->GetQlimit();
-                $cflink['priority'] = $this->GetQpriority();
-                $cflink['description'] = $this->GetDescription();
-                $cflink['enabled'] = $this->GetEnabled();
-                $cflink['default'] = $this->GetDefault();
-                $cflink['red'] = $this->GetRed();
-                $cflink['codel'] = $this->GetCodel();
-                $cflink['rio'] = $this->GetRio();
-                $cflink['ecn'] = $this->GetEcn();
+		$cflink['interface'] = $interface;
+		$cflink['qlimit'] = $this->GetQlimit();
+		$cflink['priority'] = $this->GetQpriority();
+		$cflink['description'] = $this->GetDescription();
+		$cflink['enabled'] = $this->GetEnabled();
+		$cflink['default'] = $this->GetDefault();
+		$cflink['red'] = $this->GetRed();
+		$cflink['codel'] = $this->GetCodel();
+		$cflink['rio'] = $this->GetRio();
+		$cflink['ecn'] = $this->GetEcn();
 
-                if (is_array($this->subqueues)) {
-                        $cflinkp['queue'] = array();
-                        foreach ($this->subqueues as $q) {
-				 $cflink['queue'][$q->GetQname()] = array();
-                                $q->copy_queue($interface, $cflink['queue'][$q->GetQname()]);
+		if (is_array($this->subqueues)) {
+			$cflinkp['queue'] = array();
+			foreach ($this->subqueues as $q) {
+				$cflink['queue'][$q->GetQname()] = array();
+				$q->copy_queue($interface, $cflink['queue'][$q->GetQname()]);
 			}
-                }
-
-	 }
+		}
+	}
 
 	function clean_queue($sched) {
 		clean_child_queues($sched, $this->GetLink());
@@ -1097,6 +1100,44 @@ class priq_queue {
 		return $tree;
 	}
 
+	function build_options() {
+		$pfq_rule = "";
+		$tmpvalue = $this->GetRed();
+		if (!empty($tmpvalue)) {
+			$comma = 1;
+			$pfq_rule .= " red ";
+		}
+		$tmpvalue = $this->GetRio();
+		if (!empty($tmpvalue)) {
+			if ($comma)
+				$pfq_rule .= " ,";
+			$comma = 1;
+			$pfq_rule .= " rio ";
+		}
+		$tmpvalue = $this->GetEcn();
+		if (!empty($tmpvalue)) {
+			if ($comma)
+				$pfq_rule .= " ,";
+			$comma = 1;
+			$pfq_rule .= " ecn ";
+		}
+		$tmpvalue = $this->GetCodel();
+		if (!empty($tmpvalue)) {
+			if ($comma)
+				$pfq_rule .= " ,";
+			$comma = 1;
+			$pfq_rule .= " codel ";
+		}
+		$tmpvalue = $this->GetDefault();
+		if (!empty($tmpvalue)) {
+			if ($comma)
+				$pfq_rule .= " ,";
+			$pfq_rule .= " default ";
+			$default = true;
+		}
+		return $pfq_rule;
+	}
+
 	/* Should return something like:
 	 * queue $qname on $qinterface bandwidth ....
 	 */
@@ -1110,46 +1151,10 @@ class priq_queue {
 		$tmpvalue = $this->GetQlimit();
 		if (!empty($tmpvalue))
 			$pfq_rule .= " qlimit " . $this->GetQlimit();
-		if ($this->GetRed() || $this->GetRio() || $this->GetEcn() || $this->GetDefault() || $this->GetCodel()) {
-			$pfq_rule .= " priq ( ";
-			$tmpvalue = $this->GetRed();
-			if (!empty($tmpvalue)) {
-				$comma = 1;
-				$pfq_rule .= " red ";
-			}
-			$tmpvalue = $this->GetRio();
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " rio ";
-			}
-			$tmpvalue = $this->GetEcn();
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " ecn ";
-			}
-			$tmpvalue = $this->GetCodel();
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " codel ";
-			}
-			$tmpvalue = $this->GetDefault();
-			if (!empty($tmpvalue)) {
-				if ($comma)
-					$pfq_rule .= " ,";
-				$pfq_rule .= " default ";
-				$default = true;
-			}
-			$pfq_rule .= " ) ";
-		}
-
+		$tmpvalue = $this->build_options();
+		if (!empty($tmpvalue))
+			$pfq_rule .= QTYPE . " ( " . $tmpvalue . " ) ";
 		$pfq_rule .= " \n";
-
 		return $pfq_rule;
 	}
 
@@ -1317,6 +1322,8 @@ class priq_queue {
 }
 
 class hfsc_queue extends priq_queue {
+	const QTYPE='hfsc';
+
 	/* realtime */
 	var $realtime;
 	var $r_m1;
@@ -1461,36 +1468,10 @@ class hfsc_queue extends priq_queue {
 		return $q;
 	}
 
-        function copy_queue($interface, &$cflink) {
-
-		$cflink['name'] = $this->GetQname();
-		$cflink['interface'] = $interface;
-		$cflink['qlimit'] = trim($this->GetQlimit());
-		if (empty($cflink['qlimit']))
-			unset($cflink['qlimit']);
-		$cflink['priority'] = trim($this->GetQpriority());
-		if (empty($cflink['priority']))
-			unset($cflink['priority']);
-		$cflink['description'] = trim($this->GetDescription());
-		if (empty($cflink['description']))
-			unset($cflink['description']);
+	function copy_queue($interface, &$cflink) {
+		parent::copy_queue($interface, $cflink);
 		$cflink['bandwidth'] = $this->GetBandwidth();
 		$cflink['bandwidthtype'] = $this->GetBwscale();
-		$cflink['enabled'] = trim($this->GetEnabled());
-		if (empty($cflink['enabled']))
-			unset($cflink['enabled']);
-		$cflink['default'] = trim($this->GetDefault());
-		if (empty($cflink['default']))
-			unset($cflink['default']);
-		$cflink['red'] = trim($this->GetRed());
-		if (empty($cflink['red']))
-			unset($cflink['red']);
-		$cflink['rio'] = trim($this->GetRio());
-		if (empty($cflink['rio']))
-			unset($cflink['rio']);
-		$cflink['ecn'] = trim($this->GetEcn());
-		if (empty($cflink['ecn']))
-			unset($cflink['ecn']);
 		if ($this->GetLinkshare() <> "") {
 			if ($this->GetL_m1() <> "") {
 				$cflink['linkshare1'] = $this->GetL_m1();
@@ -1545,34 +1526,23 @@ class hfsc_queue extends priq_queue {
 				unset($cflink['upperlimit']);
 			}
 		}
-
-		if (is_array($this->subqueues)) {
-			$cflinkp['queue'] = array();
-			foreach ($this->subqueues as $q) {
-				$cflink['queue'][$q->GetQname()] = array();
-				$q->copy_queue($interface, $cflink['queue'][$q->GetQname()]);
-			}
-		}
 	}
 
-	function delete_queue() { 
-		unref_on_altq_queue_list($this->GetQname());
-		cleanup_queue_from_rules($this->GetQname());
-		$parent =& $this->GetParent();
+	function delete_queue() {
+		parent::delete_queue();
 		foreach ($this->subqueues as $q)  {
-		$this->SetAvailableBandwidth($this->GetAvailableBandwidth() + $q->GetAvailableBandwidth());
+			$this->SetAvailableBandwidth($this->GetAvailableBandwidth() + $q->GetAvailableBandwidth());
 			$q->delete_queue();
 		}
-		unset_object_by_reference($this->GetLink());
 	}
 
 	/*
 	 * Should search even its children
 	 */
 	function &find_queue($interface, $qname) {
-		if ($qname == $this->GetQname()) 
-			return $this;
-
+		$result =& parent::find_queue($interface, $qname);
+		if ($result)
+			return $result;
 		foreach ($this->subqueues as $q) {
 			$result =& $q->find_queue("", $qname);
 			if ($result)
@@ -1747,6 +1717,7 @@ class hfsc_queue extends priq_queue {
 	}
 
 	function build_tree() {
+		//TODO: use parent:: somehow
 		$tree = " <li><a href=\"firewall_shaper.php?interface=" . $this->GetInterface() ."&amp;queue=" . $this->GetQname()."&amp;action=show"; 
 		$tree .= "\" ";
 		$tmpvalue = $this->GetDefault();
@@ -1764,84 +1735,41 @@ class hfsc_queue extends priq_queue {
 		return $tree;
 	}
 
-	/* Even this should take children into consideration */
-	function build_rules(&$default = false) {
-
-		$pfq_rule = " queue ". $this->qname;
-		if ($this->GetInterface())
-			$pfq_rule .= " on ".get_real_interface($this->GetInterface());
-		if ($this->GetBandwidth() && $this->GetBwscale())
-			$pfq_rule .= " bandwidth ".trim($this->GetBandwidth()).$this->GetBwscale();
-
-		$tmpvalue = $this->GetQlimit();
-		if (!empty($tmpvalue))
-			$pfq_rule .= " qlimit " . $this->GetQlimit();
-		if ($this->GetDefault() || $this->GetRed() || $this->GetRio() || $this->GetEcn() || $this->GetCodel() || $this->GetRealtime() <> "" || $this->GetLinkshare() <> "" || $this->GetUpperlimit() <> "") {
-			$pfq_rule .= " hfsc ( ";
-			$tmpvalue = $this->GetRed();
-			if (!empty($tmpvalue)) {
-				$comma = 1;
-				$pfq_rule .= " red ";
-			}
-
-			$tmpvalue = $this->GetRio();
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " rio ";
-			}
-			$tmpvalue = $this->GetEcn();
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " ecn ";
-			}
-			$tmpvalue = $this->GetCodel();
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " codel ";
-			}
-			$tmpvalue = $this->GetDefault();
-			if (!empty($tmpvalue)) {
-				if ($comma)
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " default ";
-				$default = true;
-			}
-
-			if ($this->GetRealtime() <> "")  {
-				if ($comma) 
-					$pfq_rule .= " , ";
-				if ($this->GetR_m1()  <> "" && $this->GetR_d() <> "" && $this->GetR_m2() <> "")
-					$pfq_rule .= " realtime (".$this->GetR_m1() . ", " . $this->GetR_d().", ". $this->GetR_m2() .") ";
-				else  if ($this->GetR_m2() <> "")
-					$pfq_rule .= " realtime " . $this->GetR_m2();
-				$comma = 1;
-			}
-			if ($this->GetLinkshare() <> "") {
-				if ($comma)
-					$pfq_rule .= " ,";
-				if ($this->GetL_m1() <> "" && $this->GetL_d() <> "" && $this->GetL_m2() <> "")
-					$pfq_rule .= " linkshare (".$this->GetL_m1(). ", ". $this->GetL_d(). ", ". $this->GetL_m2(). ") ";
-				else if ($this->GetL_m2() <> "")
-					$pfq_rule .= " linkshare " . $this->GetL_m2() . " ";
-				$comma = 1;
-			}
-			if ($this->GetUpperlimit() <> "") {
-				if ($comma)
-					$pfq_rule .= " ,";
-				if ($this->GetU_m1() <> "" && $this->GetU_d() <> "" && $this->GetU_m2() <> "")
-							$pfq_rule .= " upperlimit (".$this->GetU_m1().", ". $this->GetU_d().", ". $this->GetU_m2(). ") ";
-				else if ($this->GetU_m2() <> "")
-					$pfq_rule .= " upperlimit " . $this->GetU_m2() . " ";
-			}
-			$pfq_rule .= " ) ";
+	function build_options() {
+		$pfq_options = parent::build_options();
+		$comma = empty($pfq_rule) ? 0 : 1;
+		if ($this->GetRealtime() <> "")  {
+			if ($comma)
+				$pfq_rule .= " , ";
+			if ($this->GetR_m1()  <> "" && $this->GetR_d() <> "" && $this->GetR_m2() <> "")
+				$pfq_rule .= " realtime (".$this->GetR_m1() . ", " . $this->GetR_d().", ". $this->GetR_m2() .") ";
+			else  if ($this->GetR_m2() <> "")
+				$pfq_rule .= " realtime " . $this->GetR_m2();
+			$comma = 1;
 		}
+		if ($this->GetLinkshare() <> "") {
+			if ($comma)
+				$pfq_rule .= " ,";
+			if ($this->GetL_m1() <> "" && $this->GetL_d() <> "" && $this->GetL_m2() <> "")
+				$pfq_rule .= " linkshare (".$this->GetL_m1(). ", ". $this->GetL_d(). ", ". $this->GetL_m2(). ") ";
+			else if ($this->GetL_m2() <> "")
+				$pfq_rule .= " linkshare " . $this->GetL_m2() . " ";
+			$comma = 1;
+		}
+		if ($this->GetUpperlimit() <> "") {
+			if ($comma)
+				$pfq_rule .= " ,";
+			if ($this->GetU_m1() <> "" && $this->GetU_d() <> "" && $this->GetU_m2() <> "")
+						$pfq_rule .= " upperlimit (".$this->GetU_m1().", ". $this->GetU_d().", ". $this->GetU_m2(). ") ";
+			else if ($this->GetU_m2() <> "")
+				$pfq_rule .= " upperlimit " . $this->GetU_m2() . " ";
+		}
+		$pfq_rule .= " ) ";
+	}
+
+	function build_rules(&$default = false) {
+		$pfq_rule = parent::build_rules($default);
+
 		if (count($this->subqueues)) {
 			$i = count($this->subqueues);
 			$pfq_rule .= " { ";
@@ -2008,10 +1936,6 @@ class hfsc_queue extends priq_queue {
 		$form .= "</tr>";
 
 		return $form;
-	}
-
-	function update_altq_queue_data(&$data) { 
-		$this->ReadConfig($data);
 	}
 
 	function wconfig() {
