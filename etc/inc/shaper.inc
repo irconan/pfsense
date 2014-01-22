@@ -931,23 +931,38 @@ class priq_queue {
 		return;
 	}
 
-	/*
-	 * Currently this will not be called unless we decide to clone a whole 
-	 * queue tree on the 'By Queues' view or support drag&drop on the tree/list
-	 */
 	function copy_queue($interface, &$cflink) {
-
  		$cflink['name'] = $this->GetQname();
 		$cflink['interface'] = $interface;
+		$cflink['bandwidth'] = $this->GetBandwidth();
+		$cflink['bandwidthtype'] = $this->GetBwscale();
 		$cflink['qlimit'] = $this->GetQlimit();
+		if (empty($clink['qlimit']))
+			unset($cflink['qlimit']);
 		$cflink['priority'] = $this->GetQpriority();
+		if (empty($cflink['priority']))
+			unset($cflink['priority']);
 		$cflink['description'] = $this->GetDescription();
+		if (empty($cflink['description']))
+			unset($cflink['description']);
 		$cflink['enabled'] = $this->GetEnabled();
+		if (empty($cflink['enabled']))
+			unset($cflink['enabled']);
 		$cflink['default'] = $this->GetDefault();
-		$cflink['red'] = $this->GetRed();
-		$cflink['codel'] = $this->GetCodel();
-		$cflink['rio'] = $this->GetRio();
-		$cflink['ecn'] = $this->GetEcn();
+		if (empty($cflink['default']))
+			unset($cflink['default']);
+		$cflink['red'] = trim($this->GetRed());
+		if (empty($cflink['red']))
+			unset($cflink['red']);
+		$cflink['codel'] = trim($this->GetCodel());
+		if (empty($cflink['codel']))
+			unset($cflink['codel']);
+		$cflink['rio'] = trim($this->GetRio());
+		if (empty($cflink['rio']))
+			unset($cflink['rio']);
+		$cflink['ecn'] = trim($this->GetEcn());
+		if (empty($cflink['ecn']))
+			unset($cflink['ecn']);
 
 		if (is_array($this->subqueues)) {
 			$cflinkp['queue'] = array();
@@ -992,9 +1007,27 @@ class priq_queue {
                 }
         }
 
-	 function &find_queue($interface, $qname) { 
+	/*
+	 * Searches subqueues because multiple inherited types have children
+	 */
+	function &find_queue($interface, $qname) {
 		if ($qname == $this->GetQname())
-			return $this; 
+			return $this;
+		foreach ($this->subqueues as $q) {
+			$result =& $q->find_queue("", $qname);
+			if ($result)
+				return $result;
+		}
+	}
+
+	function &find_parentqueue($interface, $qname) {
+		if ($this->subqueues[$qname])
+			return $this;
+		foreach ($this->subqueues as $q) {
+			$result = $q->find_parentqueue("", $qname);
+			if ($result)
+				return $result;
+		}
 	}
 
 	function find_parentqueue($interface, $qname) { return; }
@@ -1077,6 +1110,7 @@ class priq_queue {
 
 	}
 
+	/* Considers children because multiple inherited types have children */
 	function build_tree() {
 		$tree = " <li><a href=\"firewall_shaper.php?interface=". $this->GetInterface()."&amp;queue=". $this->GetQname()."&amp;action=show"; 
 		$tree .= "\" ";
@@ -1084,18 +1118,14 @@ class priq_queue {
 		if (!empty($tmpvalue))
 			$tree .= " class=\"navlnk\"";
 		$tree .= " >" . $this->GetQname() . "</a>";
-		/* 
-		 * Not needed here!
-		 * if (is_array($queues) {
-		 *	  $tree .= "<ul>";
-		 *	  foreach ($q as $queues) 
-		 *		  $tree .= $queues['$q->GetName()']->build_tree();
-		 *	  endforeach	
-		 *	  $tree .= "</ul>";
-		 * }
-		 */
-
-		$tree .= "</li>"; 
+		if (is_array($this->subqueues)) {
+			$tree .= "<ul>";
+			foreach ($this->subqueues as $q)  {
+				$tree .= $q->build_tree();
+			}
+			$tree .= "</ul>";
+		}
+		$tree .= "</li>";
 
 		return $tree;
 	}
@@ -1155,6 +1185,24 @@ class priq_queue {
 		if (!empty($tmpvalue))
 			$pfq_rule .= QTYPE . " ( " . $tmpvalue . " ) ";
 		$pfq_rule .= " \n";
+
+		if (count($this->subqueues)) {
+			$i = count($this->subqueues);
+			$pfq_rule .= " { ";
+			foreach ($this->subqueues as $qkey => $qnone) {
+				if ($i > 1) {
+					$i--;
+					$pfq_rule .= " {$qkey}, ";
+				} else
+					$pfq_rule .= " {$qkey} ";
+			}
+			$pfq_rule .= " } \n";
+			foreach ($this->subqueues as $q)
+				$pfq_rule .= $q->build_rules($default);
+		}
+
+		$pfq_rule .= " \n";
+
 		return $pfq_rule;
 	}
 
@@ -1239,6 +1287,35 @@ class priq_queue {
 		$form .= "</td></tr>";
 		$form .= "<input type=\"hidden\" name=\"interface\" id=\"interface\"";
 		$form .= " value=\"".$this->GetInterface()."\" />";
+		$form .= "<tr>";
+		$form .= "<td valign=\"middle\" class=\"vncellreq\">" . gettext("Bandwidth") . "</td>";
+		$form .= "<td class=\"vtable\"> <input name=\"bandwidth\" id=\"bandwidth\" class=\"formfld unknown\" value=\"";
+		$form .= htmlspecialchars($this->GetBandwidth());
+		$form .= "\" />";
+		$form .= "<select name=\"bandwidthtype\" id=\"bandwidthtype\" class=\"formselect\">";
+		$form .= "<option value=\"Gb\"";
+		if ($this->GetBwscale() == "Gb")
+			$form .= " selected=\"selected\"";
+		$form .= ">" . gettext("Gbit/s") . "</option>";
+		$form .= "<option value=\"Mb\"";
+		if ($this->GetBwscale() == "Mb")
+			$form .= " selected=\"selected\"";
+		$form .= ">" . gettext("Mbit/s") . "</option>";
+		$form .= "<option value=\"Kb\"";
+		if ($this->GetBwscale() == "Kb")
+			$form .= " selected=\"selected\"";
+		$form .= ">" . gettext("Kbit/s") . "</option>";
+		$form .= "<option value=\"b\"";
+		if ($this->GetBwscale() == "b")
+			$form .= " selected=\"selected\"";
+		$form .= ">" . gettext("Bit/s") . "</option>";
+		$form .= "<option value=\"%\"";
+		if ($this->GetBwscale() == "%")
+			$form .= " selected=\"selected\"";
+		$form .= ">%</option>";
+		$form .= "</select> <br/>";
+		$form .= "<span class=\"vexpl\">" . gettext("Choose the amount of bandwidth for this queue");
+		$form .= "</span></td></tr>";
 
 		return $form;
 	}
@@ -1291,6 +1368,8 @@ class priq_queue {
 			$cflink = array();
 		$cflink['name'] = $this->GetQname();
 		$cflink['interface'] = $this->GetInterface();
+		$cflink['bandwidth'] = $this->GetBandwidth();
+		$cflink['bandwidthtype'] = $this->GetBwscale();
 		$cflink['qlimit'] = trim($this->GetQlimit());
 		if (empty($cflink['qlimit']))
 			unset($cflink['qlimit']);
@@ -1470,8 +1549,6 @@ class hfsc_queue extends priq_queue {
 
 	function copy_queue($interface, &$cflink) {
 		parent::copy_queue($interface, $cflink);
-		$cflink['bandwidth'] = $this->GetBandwidth();
-		$cflink['bandwidthtype'] = $this->GetBwscale();
 		if ($this->GetLinkshare() <> "") {
 			if ($this->GetL_m1() <> "") {
 				$cflink['linkshare1'] = $this->GetL_m1();
@@ -1536,30 +1613,6 @@ class hfsc_queue extends priq_queue {
 		}
 	}
 
-	/*
-	 * Should search even its children
-	 */
-	function &find_queue($interface, $qname) {
-		$result =& parent::find_queue($interface, $qname);
-		if ($result)
-			return $result;
-		foreach ($this->subqueues as $q) {
-			$result =& $q->find_queue("", $qname);
-			if ($result)
-				return $result;
-		}
-	}
-
-	function &find_parentqueue($interface, $qname) {
-		if ($this->subqueues[$qname]) 
-			return $this;
-		foreach ($this->subqueues as $q) {
-			$result = $q->find_parentqueue("", $qname);
-			if ($result)
-				return $result;
-		}
-	}
-
 	function validate_input($data, &$input_errors) {
 		parent::validate_input($data, $input_errors);
 
@@ -1569,31 +1622,6 @@ class hfsc_queue extends priq_queue {
 		$reqdfieldsn[] = gettext("Bandwidthtype");
 
 		shaper_do_input_validation($data, $reqdfields, $reqdfieldsn, $input_errors);
-
-		if (isset($data['linkshare3']) && $data['linkshare3'] <> "") {
-			if ($data['bandwidth'] && (!is_numeric($data['bandwidth'])))
-				$input_errors[] = gettext("Bandwidth must be an integer.");
-
-			if ($data['bandwidth'] < 0)
-				$input_errors[] = gettext("Bandwidth cannot be negative.");
-
-			if ($data['bandwidthtype'] == "%") {
-				if ($data['bandwidth'] > 100 || $data['bandwidth'] < 0)
-					$input_errors[] = gettext("Bandwidth in percentage should be between 1 and 100 bounds.");
-			}
-		/*
-			$parent =& $this->GetParent();
-			switch ($data['bandwidthtype']) {
-			case "%":
-				$myBw = $parent->GetAvailableBandwidth() * floatval($data['bandwidth']) / 100;
-			default:
-				$mybw = floatval($data['bandwidth']) * get_bandwidthtype_scale($data['bandwidthtype']);
-				break;
-			}
-			if ($parent->GetAvailableBandwidth() < $myBw)
-				$input_errors[] = "The sum of children bandwidth exceeds that of the parent.";
-		*/
-		}
 
 		if ($data['upperlimit1'] <> "" &&  $data['upperlimit2'] == "")
 			$input_errors[] = gettext("upperlimit service curve defined but missing (d) value");
@@ -1716,25 +1744,6 @@ class hfsc_queue extends priq_queue {
 			$this->DisableUpperlimit();
 	}
 
-	function build_tree() {
-		//TODO: use parent:: somehow
-		$tree = " <li><a href=\"firewall_shaper.php?interface=" . $this->GetInterface() ."&amp;queue=" . $this->GetQname()."&amp;action=show"; 
-		$tree .= "\" ";
-		$tmpvalue = $this->GetDefault();
-		if (!empty($tmpvalue))
-			$tree .= " class=\"navlnk\"";
-		$tree .= " >" . $this->GetQname() . "</a>";
-		if (is_array($this->subqueues)) {
-			$tree .= "<ul>";
-			foreach ($this->subqueues as $q)  {
-				$tree .= $q->build_tree();
-			}	
-			$tree .= "</ul>";
-		}
-		$tree .= "</li>";
-		return $tree;
-	}
-
 	function build_options() {
 		$pfq_options = parent::build_options();
 		$comma = empty($pfq_rule) ? 0 : 1;
@@ -1765,29 +1774,6 @@ class hfsc_queue extends priq_queue {
 				$pfq_rule .= " upperlimit " . $this->GetU_m2() . " ";
 		}
 		$pfq_rule .= " ) ";
-	}
-
-	function build_rules(&$default = false) {
-		$pfq_rule = parent::build_rules($default);
-
-		if (count($this->subqueues)) {
-			$i = count($this->subqueues);
-			$pfq_rule .= " { ";
-			foreach ($this->subqueues as $qkey => $qnone) {
-				if ($i > 1) {
-					$i--;
-					$pfq_rule .= " {$qkey}, ";
-				} else
-					$pfq_rule .= " {$qkey} ";
-			}
-			$pfq_rule .= " } \n";
-			foreach ($this->subqueues as $q)
-				$pfq_rule .= $q->build_rules($default);
-		}
-
-		 $pfq_rule .= " \n";
-
-		return $pfq_rule;
 	}
 
 	function build_javascript() {
@@ -1836,35 +1822,6 @@ class hfsc_queue extends priq_queue {
 
 	function build_form() {
 		$form = parent::build_form();
-		$form .= "<tr>";
-		$form .= "<td valign=\"middle\" class=\"vncellreq\">" . gettext("Bandwidth") . "</td>";
-		$form .= "<td class=\"vtable\"> <input name=\"bandwidth\" id=\"bandwidth\" class=\"formfld unknown\" value=\"";
-		$form .= htmlspecialchars($this->GetBandwidth());
-		$form .= "\" />";
-		$form .= "<select name=\"bandwidthtype\" id=\"bandwidthtype\" class=\"formselect\">";
-		$form .= "<option value=\"Gb\"";
-		if ($this->GetBwscale() == "Gb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Gbit/s") . "</option>";
-		$form .= "<option value=\"Mb\"";
-		if ($this->GetBwscale() == "Mb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Mbit/s") . "</option>";
-		$form .= "<option value=\"Kb\"";
-		if ($this->GetBwscale() == "Kb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Kbit/s") . "</option>";
-		$form .= "<option value=\"b\"";
-		if ($this->GetBwscale() == "b")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Bit/s") . "</option>";
-		$form .= "<option value=\"%\"";
-		if ($this->GetBwscale() == "%")
-			$form .= " selected=\"selected\"";
-		$form .= ">%</option>";
-		$form .= "</select> <br/>";
-		$form .= "<span class=\"vexpl\">" . gettext("Choose the amount of bandwidth for this queue");
-		$form .= "</span></td></tr>";
 		$form .= "<tr>";
 		$form .= "<td width=\"22%\" valign=\"middle\" class=\"vncellreq\">" . gettext("Service Curve (sc)") . "</td>";
 		$form .= "<td width=\"78%\" class=\"vtable\">";
@@ -1941,8 +1898,6 @@ class hfsc_queue extends priq_queue {
 	function wconfig() {
 		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
-		$cflink['bandwidth'] = $this->GetBandwidth();
-		$cflink['bandwidthtype'] = $this->GetBwscale();
 		if ($this->GetLinkshare() <> "") {
 			if ($this->GetL_m1() <> "") {
 				$cflink['linkshare1'] = $this->GetL_m1();
@@ -2016,6 +1971,8 @@ class hfsc_queue extends priq_queue {
 }
 
 class cbq_queue extends priq_queue {
+	const QTYPE='cbq';
+
 	var $qborrow = "";
 
 	function GetBorrow() {
@@ -2068,78 +2025,18 @@ class cbq_queue extends priq_queue {
 	}
 
 	function copy_queue($interface, &$cflink) {
-
-		$cflink['interface'] = $interface;
-		$cflink['qlimit'] = trim($this->GetQlimit());
-		if (empty($clink['qlimit']))
-			unset($cflink['qlimit']);
-		$cflink['priority'] = trim($this->GetQpriority());
-		if (empty($cflink['priority']))
-			unset($cflink['priority']);
-		$cflink['name'] = $this->GetQname();
-		$cflink['description'] = trim($this->GetDescription());
-		if (empty($cflink['description']))
-			unset($cflink['description']);
-		$cflink['bandwidth'] = $this->GetBandwidth();
-		$cflink['bandwidthtype'] = $this->GetBwscale();
-		$cflink['enabled'] = trim($this->GetEnabled());
-		if (empty($cflink['enabled']))
-			unset($cflink['enabled']);
-		$cflink['default'] = trim($this->GetDefault());
-		if (empty($cflink['default']))
-			unset($cflink['default']);
-		$cflink['red'] = trim($this->GetRed());
-		if (empty($cflink['red']))
-			unset($cflink['red']);
-		$cflink['rio'] = trim($this->GetRio());
-		if (empty($cflink['rio']))
-			unset($cflink['rio']);
-		$cflink['ecn'] = trim($this->GetEcn());
-		if (empty($cflink['ecn']))
-			unset($cflink['ecn']);
+		parent::copy_queue($interface, $cflink);
 		$cflink['borrow'] = trim($this->GetBorrow());
 		if (empty($cflink['borrow']))
 			unset($cflink['borrow']);
-		if (is_array($this->queues)) {
-			$cflinkp['queue'] = array();
-			foreach ($this->subqueues as $q) {
-				$cflink['queue'][$q->GetQname()] = array();
-				$q->copy_queue($interface, $cflink['queue'][$q->GetQname()]);
-			}
-		}
-	}
-
-	/*
-	 * Should search even its children
-	 */
-	function &find_queue($interface, $qname) {
-		if ($qname == $this->GetQname())
-			return $this;
-		foreach ($this->subqueues as $q) {
-			$result =& $q->find_queue("", $qname);
-			if ($result)
-				return $result;
-		}
-	}
-
-	function &find_parentqueue($interface, $qname) {
-		if ($this->subqueues[$qname])
-			return $this;
-		foreach ($this->subqueues as $q) {
-			$result = $q->find_parentqueue("", $qname);
-			if ($result)
-				return $result;
-		}
 	}
 
 	function delete_queue() {
-		unref_on_altq_queue_list($this->GetQname());
-		cleanup_queue_from_rules($this->GetQname());
+		parent::delete_queue();
 		foreach ($this->subqueues as $q) {
-		$this->SetAvailableBandwidth($this->GetAvailableBandwidth() + $q->GetAvailableBandwidth());
+			$this->SetAvailableBandwidth($this->GetAvailableBandwidth() + $q->GetAvailableBandwidth());
 			$q->delete_queue();
 		}
-		unset_object_by_reference($this->GetLink());
 	}
 
 	function validate_input($data, &$input_errors) {
@@ -2193,130 +2090,19 @@ class cbq_queue extends priq_queue {
 		return parent::build_javascript();
 	}
 
-	function build_tree() {
-		$tree = " <li><a href=\"firewall_shaper.php?interface=" . $this->GetInterface()."&amp;queue=" . $this->GetQname()."&amp;action=show"; 
-		$tree .= "\" ";
-		$tmpvalue = trim($this->GetDefault());
-		if (!empty($tmpvalue))
-			$tree .= " class=\"navlnk\"";
-		$tree .= " >" . $this->GetQname() . "</a>";
-		if (is_array($this->subqueues)) {
-			$tree .= "<ul>";
-			foreach ($this->subqueues as $q)  {
-				$tree .= $q->build_tree();
-			}	
-			$tree .= "</ul>";
+	function build_options() {
+		$pfq_rule = parent::build_options();
+		$tmpvalue = trim($this->GetBorrow());
+		if (!empty($tmpvalue)) {
+			if ($comma)
+				$pfq_rule .= ", ";
+			$pfq_rule .= " borrow ";
 		}
-		$tree .= "</li>";
-		return $tree;
-	}
-
-	/* Even this should take children into consideration */
-	function build_rules(&$default = false) {
-		$pfq_rule = "queue ". $this->qname;
-		if ($this->GetInterface())
-			$pfq_rule .= " on ".get_real_interface($this->GetInterface());
-		if ($this->GetBandwidth() && $this->GetBwscale())
-			$pfq_rule .= " bandwidth ".trim($this->GetBandwidth()).$this->GetBwscale();
-		$tmpvalue = $this->GetQpriority();
-		if (!empty($tmpvalue))
-			$pfq_rule .= " priority " . $this->GetQpriority();
-		$tmpvalue = trim($this->GetQlimit());
-		if (!empty($tmpvalue))
-			$pfq_rule .= " qlimit " . $this->GetQlimit();
-		if ($this->GetDefault() || $this->GetRed() || $this->GetRio() || $this->GetEcn() || $this->GetBorrow() || $this->GetCodel()) {
-			$pfq_rule .= " cbq ( ";
-			$tmpvalue = trim($this->GetRed());
-			if (!empty($tmpvalue)) {
-				$comma = 1;
-				$pfq_rule .= " red ";
-			}
-			$tmpvalue = trim($this->GetCodel());
-			if (!empty($tmpvalue)) {
-				$comma = 1;
-				$pfq_rule .= " codel ";
-			}
-			$tmpvalue = trim($this->GetRio());
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " rio ";
-			}
-			$tmpvalue = trim($this->GetEcn());
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " ecn ";
-			}
-			$tmpvalue = trim($this->GetDefault());
-			if (!empty($tmpvalue)) {
-				if ($comma)
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " default ";
-				$default = true;
-			}
-			$tmpvalue = trim($this->GetBorrow());
-			if (!empty($tmpvalue)) {
-				if ($comma)
-					$pfq_rule .= ", ";
-				$pfq_rule .= " borrow ";
-			}
-			$pfq_rule .= " ) ";
-		} 
-		if (count($this->subqueues)) {
-			$i = count($this->subqueues);
-			$pfq_rule .= " { ";
-			foreach ($this->subqueues as $qkey => $qnone) {
-				if ($i > 1) {
-					$i--;
-					$pfq_rule .= " {$qkey}, ";
-				} else
-					$pfq_rule .= " {$qkey} ";
-			}
-			$pfq_rule .= " } \n";
-			foreach ($this->subqueues as $q)
-				$pfq_rule .= $q->build_rules($default);
-		}
-
-		$pfq_rule .= " \n";
 		return $pfq_rule;
 	}
 
 	function build_form() {
 		$form = parent::build_form();
-		$form .= "<tr>";
-		$form .= "<td valign=\"middle\" class=\"vncellreq\">" . gettext("Bandwidth") . "</td>";
-		$form .= "<td class=\"vtable\"> <input name=\"bandwidth\" id=\"bandwidth\" class=\"formfld unknown\" value=\"";
-		if ($this->GetBandwidth() > 0)
-			$form .= htmlspecialchars($this->GetBandwidth());
-		$form .= "\" />";
-		$form .= "<select name=\"bandwidthtype\" id=\"bandwidthtype\" class=\"formselect\">";
-		$form .= "<option value=\"Gb\"";
-		if ($this->GetBwscale() == "Gb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Gbit/s") . "</option>";
-		$form .= "<option value=\"Mb\"";
-		if ($this->GetBwscale() == "Mb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Mbit/s") . "</option>";
-		$form .= "<option value=\"Kb\"";
-		if ($this->GetBwscale() == "Kb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Kbit/s") . "</option>";
-		$form .= "<option value=\"b\"";
-		if ($this->GetBwscale() == "b")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Bit/s") . "</option>";
-		$form .= "<option value=\"%\"";
-		if ($this->GetBwscale() == "%")
-			$form .= " selected=\"selected\"";
-		$form .= ">%</option>";
-		$form .= "</select> <br/>";
-		$form .= "<span class=\"vexpl\">" . gettext("Choose the amount of bandwidth for this queue");
-		$form .= "</span></td></tr>";
 		$form .= "<tr><td class=\"vncellreq\">" . gettext("Scheduler specific options") . "</td>";
 		$form .= "<td class=\"vtable\"><input type=\"checkbox\" id=\"borrow\" name=\"borrow\"";
 		if($this->GetBorrow() == "on") 
@@ -2333,8 +2119,6 @@ class cbq_queue extends priq_queue {
 	function wconfig() {
 		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
-		$cflink['bandwidth'] = $this->GetBandwidth();
-		$cflink['bandwidthtype'] = $this->GetBwscale();
 		$cflink['borrow'] = trim($this->GetBorrow());
 		if (empty($cflink['borrow']))
 			unset($cflink['borrow']);
@@ -2342,6 +2126,8 @@ class cbq_queue extends priq_queue {
 }
 
 class fairq_queue extends priq_queue {
+	const QTYPE='fairq';
+
 	var $hogs;
 	var $buckets;
 
@@ -2363,36 +2149,9 @@ class fairq_queue extends priq_queue {
 
 
 	function copy_queue($interface, &$cflink) {
-                $cflink['interface'] = $interface;
-                $cflink['qlimit'] = $this->GetQlimit();
-                $cflink['priority'] = $this->GetQpriority();
-                $cflink['name'] = $this->GetQname();
-                $cflink['description'] = $this->GetDescription();
-                $cflink['bandwidth'] = $this->GetBandwidth();
-                $cflink['bandwidthtype'] = $this->GetBwscale();
-                $cflink['enabled'] = $this->GetEnabled();
-                $cflink['default'] = $this->GetDefault();
-                $cflink['red'] = $this->GetRed();
-                $cflink['rio'] = $this->GetRio();
-                $cflink['ecn'] = $this->GetEcn();
-                $cflink['buckets'] = $this->GetBuckets();
+		parent::copy_queue($interface, $cflink);
+		$cflink['buckets'] = $this->GetBuckets();
 		$cflink['hogs'] = $this->GetHogs();
-	}
-
-	/*
-	 * Should search even its children
-	 */
-	function &find_queue($interface, $qname) {
-		if ($qname == $this->GetQname())
-			return $this;
-	}
-
-	function find_parentqueue($interface, $qname) { return; }
-
-	function delete_queue() {
-		unref_on_altq_queue_list($this->GetQname());
-		cleanup_queue_from_rules($this->GetQname());
-		unset_object_by_reference($this->GetLink());
 	}
 
 	function validate_input($data, &$input_errors) {
@@ -2406,32 +2165,6 @@ class fairq_queue extends priq_queue {
 		$reqdfieldsn[] = gettext("Bandwidthtype");
 
 		shaper_do_input_validation($data, $reqdfields, $reqdfieldsn, $input_errors);
-
-		if ($data['bandwidth'] && !is_numeric($data['bandwidth']))
-			$input_errors[] = gettext("Bandwidth must be an integer.");
-
-
-		if ($data['bandwidth'] < 0)
-			$input_errors[] = gettext("Bandwidth cannot be negative.");
-
-
-		if ($data['bandwidthtype'] == "%") {
-			if ($data['bandwidth'] > 100 || $data['bandwidth'] < 0)
-				$input_errors[] = gettext("Bandwidth in percentage should be between 1 and 100 bounds.");
-		}
-
-/*
-           	$parent =& $this->GetParent();
-           	switch ($data['bandwidthtype']) {
-                       case "%":
-                             $myBw = $parent->GetAvailableBandwidth() * floatval($data['bandwidth']) / 100;
-                       default:
-                             $mybw = floatval($data['bandwidth']) * get_bandwidthtype_scale($data['bandwidthtype']);
-                             break;
-           	}
-                if ($parent->GetAvailableBandwidth() < floatval($myBw))
-                        $input_errors[] = "The sum of children bandwidth exceeds that of the parent.";
-*/
 	}
 
 	function ReadConfig(&$q) {
@@ -2462,105 +2195,25 @@ class fairq_queue extends priq_queue {
 		return $tree;
 	}
 
-	/* Even this should take children into consideration */
-	function build_rules(&$default = false) {
-		$pfq_rule = "queue ". $this->qname;
-		if ($this->GetInterface())
-			$pfq_rule .= " on ".get_real_interface($this->GetInterface());
-		if ($this->GetBandwidth() && $this->GetBwscale())
-			$pfq_rule .= " bandwidth ".trim($this->GetBandwidth()).$this->GetBwscale();
-		$tmpvalue = trim($this->GetQpriority());
-		if (!empty($tmpvalue))
-			$pfq_rule .= " priority " . $this->GetQpriority();
-		$tmpvalue = trim($this->GetQlimit());
-		if (!empty($tmpvalue))
-			$pfq_rule .= " qlimit " . $this->GetQlimit();
-		if ($this->GetDefault() || $this->GetRed() || $this->GetRio() 
-			|| $this->GetEcn() || $this->GetBuckets() || $this->GetHogs() || $this->GetCodel()) {
-			$pfq_rule .= " fairq ( ";
-			$tmpvalue = trim($this->GetRed());
-			if (!empty($tmpvalue)) {
-				$comma = 1;
-				$pfq_rule .= " red ";
-			}
-			$tmpvalue = trim($this->GetCodel());
-			if (!empty($tmpvalue)) {
-				$comma = 1;
-				$pfq_rule .= " codel ";
-			}
-			$tmpvalue = trim($this->GetRio());
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " rio ";
-			}
-			$tmpvalue = trim($this->GetEcn());
-			if (!empty($tmpvalue)) {
-				if ($comma) 
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " ecn ";
-			}
-			$tmpvalue = trim($this->GetDefault());
-			if (!empty($tmpvalue)) {
-				if ($comma)
-					$pfq_rule .= " ,";
-				$comma = 1;
-				$pfq_rule .= " default ";
-				$default = true;
-			}
-			$tmpvalue = trim($this->GetBuckets());
-			if (!empty($tmpvalue)) {
-				if ($comma)
-					$pfq_rule .= ", ";
-				$pfq_rule .= " buckets " . $this->GetBuckets() . " ";
-			}
-			$tmpvalue = trim($this->GetHogs());
-			if (!empty($tmpvalue)) {
-				if ($comma)
-					$pfq_rule .= ", ";
-				$pfq_rule .= " hogs " . $this->GetHogs() . " ";
-			}
-				$pfq_rule .= " ) ";
-		} 
-
-		$pfq_rule .= " \n";
+	function build_options() {
+		$pfq_rule = parent::build_options();
+		$tmpvalue = trim($this->GetBuckets());
+		if (!empty($tmpvalue)) {
+			if ($comma)
+				$pfq_rule .= ", ";
+			$pfq_rule .= " buckets " . $this->GetBuckets() . " ";
+		}
+		$tmpvalue = trim($this->GetHogs());
+		if (!empty($tmpvalue)) {
+			if ($comma)
+				$pfq_rule .= ", ";
+			$pfq_rule .= " hogs " . $this->GetHogs() . " ";
+		}
 		return $pfq_rule;
 	}
 
 	function build_form() {
 		$form = parent::build_form();
-		$form .= "<tr>";
-		$form .= "<td valign=\"middle\" class=\"vncellreq\">" . gettext("Bandwidth") . "</td>";
-		$form .= "<td class=\"vtable\"> <input name=\"bandwidth\" id=\"bandwidth\" class=\"formfld unknown\" value=\"";
-		if ($this->GetBandwidth() > 0)
-			$form .= htmlspecialchars($this->GetBandwidth());
-		$form .= "\" />";
-		$form .= "<select name=\"bandwidthtype\" id=\"bandwidthtype\" class=\"formselect\">";
-		$form .= "<option value=\"Gb\"";
-		if ($this->GetBwscale() == "Gb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Gbit/s") . "</option>";
-		$form .= "<option value=\"Mb\"";
-		if ($this->GetBwscale() == "Mb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Mbit/s") . "</option>";
-		$form .= "<option value=\"Kb\"";
-		if ($this->GetBwscale() == "Kb")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Kbit/s") . "</option>";
-		$form .= "<option value=\"b\"";
-		if ($this->GetBwscale() == "b")
-			$form .= " selected=\"selected\"";
-		$form .= ">" . gettext("Bit/s") . "</option>";
-		$form .= "<option value=\"%\"";
-		if ($this->GetBwscale() == "%")
-			$form .= " selected=\"selected\"";
-		$form .= ">%</option>";
-		$form .= "</select> <br/>";
-		$form .= "<span class=\"vexpl\">" . gettext("Choose the amount of bandwidth for this queue");
-		$form .= "</span></td></tr>";
 		$form .= "<tr><td class=\"vncellreq\">" . gettext("Scheduler specific options") . "</td>";
 		$form .= "<td class=\"vtable\"><table><tr><td>";
 		$form .= "<input id=\"buckets\" name=\"buckets\" value=\"";
@@ -2584,8 +2237,6 @@ class fairq_queue extends priq_queue {
 	function wconfig() {
 		parent::wconfig();
 		$cflink =& get_reference_to_me_in_config($this->GetLink());
-		$cflink['bandwidth'] = $this->GetBandwidth();
-		$cflink['bandwidthtype'] = $this->GetBwscale();
 		$cflink['buckets'] = trim($this->GetBuckets());
 		if (empty($cflink['buckets']))
 			unset($cflink['buckets']);
@@ -2728,11 +2379,11 @@ class dummynet_class {
 
 		shaper_do_input_validation($data, $reqdfields, $reqdfieldsn, $input_errors);
 
-		if ($data['plr'] && ((!is_numeric($data['plr'])) ||
-			($data['plr'] < 0 && $data['plr'] > 1))) 
+		if ($data['plr'] && (!is_numeric($data['plr']) ||
+			($data['plr'] < 0) || ($data['plr'] > 1))) 
 				$input_errors[] = gettext("Plr must be a value between 0 and 1.");
-		if (($data['buckets'] && (!is_numeric($data['buckets']))) ||
-			($data['buckets'] < 16 && $data['buckets'] > 65535)) 
+		if ($data['buckets'] && (!is_numeric($data['buckets']) ||
+			($data['buckets'] < 16) || ($data['buckets'] > 65535)))
 				$input_errors[] = gettext("Buckets must be an integer between 16 and 65535.");
 		if ($data['qlimit'] && (!is_numeric($data['qlimit']))) 
             		$input_errors[] = gettext("Queue limit must be an integer");
@@ -2957,7 +2608,7 @@ class dnpipe_class extends dummynet_class {
 		if (!empty($_POST)) {
 			$bandwidth = array();
 			for ($i = 0; $i < 30; $i++) {
-				if (isset($q["bandwidth{$i}"]) && $q["bandwidth{$i}"] <> "") { 
+				if (isset($q["bandwidth{$i}"]) && $q["bandwidth{$i}"] <> "") {
 					$bw = array();
 					$bw['bw'] = $q["bandwidth{$i}"];
 					$bw['burst'] = $q["burst{$i}"];
@@ -2970,7 +2621,7 @@ class dnpipe_class extends dummynet_class {
 			}
 			$this->SetBandwidth($bandwidth);
 		}
-		
+
 		if (is_array($q['bandwidth']) && is_array($q['bandwidth']['item'])) {
 			$this->SetBandwidth($q['bandwidth']['item']);
 			$this->SetBurst($q['burst']['item']);
@@ -2987,8 +2638,7 @@ class dnpipe_class extends dummynet_class {
             		$this->SetDelay($q['delay']);
 		else
 			$this->SetDelay(0);
-
-        }
+	}
 
 	function build_tree() {
 		$tree = " <li><a href=\"firewall_shaper_vinterface.php?pipe=" . $this->GetQname() ."&amp;queue=".$this->GetQname() ."&amp;action=show\">"; 
@@ -3364,33 +3014,33 @@ class dnqueue_class extends dummynet_class {
 				$input_errors[] = gettext("Weight must be an integer between 1 and 100.");
 	}
 
-        /*
-         * Should search even its children
-         */
-        function &find_queue($pipe, $qname) {
-                if ($qname == $this->GetQname()) 
-                	return $this;
-		else
-			return NULL;
-        }
+	/*
+	 * Should search even its children
+	 */
+	function &find_queue($pipe, $qname) {
+			if ($qname == $this->GetQname()) 
+				return $this;
+	else
+		return NULL;
+	}
 
 	function &find_parentqueue($pipe, $qname) {
 		return $this->qparent;
-        }
+	}
 
-        function &get_queue_list(&$qlist) {
-		if ($this->GetEnabled() == "")
-			return;
-        	$qlist[$this->GetQname()] = "?" .$this->GetNumber();
-        }		
+	function &get_queue_list(&$qlist) {
+	if ($this->GetEnabled() == "")
+		return;
+		$qlist[$this->GetQname()] = "?" .$this->GetNumber();
+	}
 
 	function ReadConfig(&$q) {
 		parent::ReadConfig($q);
-       		if (isset($q['weight']) && $q['weight'] <> "")
-            		$this->SetWeight($q['weight']);
+		if (isset($q['weight']) && $q['weight'] <> "")
+			$this->SetWeight($q['weight']);
 		else
-            		$this->SetWeight("");
-        }
+			$this->SetWeight("");
+	}
 
 	function build_tree() {
 		$parent =& $this->GetParent();

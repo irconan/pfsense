@@ -2818,6 +2818,9 @@ function upgrade_082_to_083() {
 		$config['captiveportal']['cpzone'] = array();
 		$config['captiveportal']['cpzone'] = $tmpcp;
 		$config['captiveportal']['cpzone']['zoneid'] = 8000;
+		$config['captiveportal']['cpzone']['zone'] = "cpzone";
+		if ($config['captiveportal']['cpzone']['auth_method'] == "radius")
+			$config['captiveportal']['cpzone']['radius_protocol'] = "PAP";
 	}
 	if (!empty($config['voucher'])) {
 		$tmpcp = $config['voucher'];
@@ -3146,6 +3149,21 @@ function upgrade_097_to_098() {
 }
 
 function upgrade_098_to_099() {
+	global $config;
+	foreach ($config['dhcpd'] as & $dhcpifconf) {
+		if (isset($dhcpifconf['next-server'])) {
+			$dhcpifconf['nextserver'] = $dhcpifconf['next-server'];
+			unset($dhcpifconf['next-server']);
+		}
+	}
+}
+
+function upgrade_099_to_100() {
+	require_once("/etc/inc/services.inc");
+	install_cron_job("/usr/bin/nice -n20 newsyslog", false);
+}
+
+function upgrade_100_to_101() {
 	global $config, $g;
 
 	if (!is_array($config['captiveportal']))
@@ -3159,4 +3177,145 @@ function upgrade_098_to_099() {
 			$config['captiveportal'][$cpzone]['passthrumac'][$idx]['action'] = 'pass';
 	}
 }
+
+/* Convert OpenVPN Compression option to the new style */
+function upgrade_101_to_102() {
+	global $config;
+	// Nothing to do if there is no OpenVPN tag
+	if (!isset($config['openvpn']) || !is_array($config['openvpn']))
+		return;
+
+	if (is_array($config['openvpn']['openvpn-server'])) {
+		foreach ($config['openvpn']['openvpn-server'] as &$vpn) {
+			if (!empty($vpn['compression']))
+				$vpn['compression'] = "adaptive";
+		}
+	}
+	if (is_array($config['openvpn']['openvpn-client'])) {
+		foreach ($config['openvpn']['openvpn-client'] as &$vpn) {
+			if (!empty($vpn['compression']))
+				$vpn['compression'] = "adaptive";
+		}
+	}
+}
+
+function upgrade_102_to_103() {
+	global $config;
+
+	if (isset($config['nat']['advancedoutbound']['enable'])) {
+		$config['nat']['advancedoutbound']['mode'] = "advanced";
+		unset($config['nat']['advancedoutbound']['enable']);
+	} else
+		$config['nat']['advancedoutbound']['mode'] = "automatic";
+
+	$config['nat']['outbound'] = $config['nat']['advancedoutbound'];
+
+	unset($config['nat']['ipsecpassthru']);
+	unset($config['nat']['advancedoutbound']);
+}
+
+function upgrade_103_to_104() {
+	global $config;
+
+	$changed_privs = array(
+		"page-diag-system-activity" => "page-diagnostics-system-activity",
+		"page-interfacess-groups" => "page-interfaces-groups",
+		"page-interfacess-lagg" => "page-interfaces-lagg",
+		"page-interfacess-qinq" => "page-interfaces-qinq"
+	);
+
+	/* update user privileges */
+	foreach ($config['system']['user'] as & $user) {
+		if (!is_array($user['priv']))
+			continue;
+		foreach ($user['priv'] as & $priv) {
+			if (array_key_exists($priv, $changed_privs))
+				$priv = $changed_privs[$priv];
+		}
+	}
+
+	/* update group privileges */
+	foreach ($config['system']['group'] as & $group) {
+		if (!is_array($group['priv']))
+			continue;
+		foreach ($group['priv'] as & $priv) {
+			if (array_key_exists($priv, $changed_privs))
+				$priv = $changed_privs[$priv];
+		}
+	}
+
+	/* sync all local account information */
+	local_sync_accounts();
+}
+
+function upgrade_104_to_105() {
+	global $config;
+
+	if (is_array($config['captiveportal'])) {
+		$zoneid = 2;
+		foreach ($config['captiveportal'] as $cpzone => $cpcfg) {
+			if (empty($cpfg['zoneid'])) {
+				$config['captiveportal'][$cpzone]['zoneid'] = $zoneid;
+				$zoneid += 2;
+			} else if ($cpcfg['zoneid'] > 4000) {
+				$config['captiveportal'][$cpzone]['zoneid'] = $zoneid;
+				$zoneid += 2;
+			}
+		}
+	}
+}
+
+function upgrade_105_to_106() {
+	global $config;
+
+	if (is_array($config['virtualip']) && is_array($config['virtualip']['vip'])) {
+		foreach ($config['virtualip']['vip'] as $vipidx => $vip) {
+			if ($vip['mode'] == "ipalias" && strstr($vip['interface'], "_vip")) {
+				/* Convert to a carp with same properties as its carp version */
+				$converted = false;
+				foreach ($config['virtualip']['vip'] as $bvip) {
+					if ($bvip['mode'] == "carp" && "{$bvip['interface']}_vip{$bvip['vhid']}" == $vip['interface']) {
+						$ipaaddr = $vip['subnet'];
+						$ipamask = $vip['subnet_bits'];
+						$config['virtualip']['vip'][$vipidx] = $bvip;
+						$config['virtualip']['vip'][$vipidx]['subnet'] = $ipaaddr;
+						$config['virtualip']['vip'][$vipidx]['subnet_bits'] = $ipamask;
+						$converted = true;
+						break;
+					}
+				}
+				if ($converted === false)
+					log_error("WARNING: IPalias {$vip['subnet']}/{$vip['subnet_bits']} was not completed successfully. Upgrading it yourself is the only remaining option!");
+			}
+		}
+		unset($vip, $bvip, $vipidx);
+	}
+}
+
+function upgrade_106_to_107() {
+	global $config;
+
+	if (is_array($config['filter']) && is_array($config['filter']['rule'])) {
+		$tracker = (int)microtime(true);
+		foreach ($config['filter']['rule'] as $ridx => $rule) {
+			if (empty($rule['tracker'])) {
+				$config['filter']['rule'][$ridx]['tracker'] = $tracker;
+				$tracker++;
+			}
+		}
+		unset($tracker, $ridx);
+	}
+	if (is_array($config['nat']) && is_array($config['nat']['rule'])) {
+		$tracker = (int)microtime(true);
+		foreach ($config['nat']['rule'] as $ridx => $rule) {
+			if (empty($rule['tracker'])) {
+				$config['nat']['rule'][$ridx]['tracker'] = $tracker;
+				$tracker++;
+			}
+
+		}
+		unset($tracker, $ridx);
+	}
+}
+
 ?>

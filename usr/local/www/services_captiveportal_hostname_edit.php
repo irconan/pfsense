@@ -36,8 +36,8 @@
 
 ##|+PRIV
 ##|*IDENT=page-services-captiveportal-editallowedhostnames
-##|*NAME=Services: Captive portal: Edit Allowed IPs page
-##|*DESCR=Allow access to the 'Services: Captive portal: Edit Allowed IPs' page.
+##|*NAME=Services: Captive portal: Edit Allowed Hostnames page
+##|*DESCR=Allow access to the 'Services: Captive portal: Edit Allowed Hostnames' page.
 ##|*MATCH=services_captiveportal_hostname_edit.php*
 ##|-PRIV
 
@@ -140,7 +140,8 @@ if ($_POST) {
 
 		$rules = captiveportal_allowedhostname_configure();
 		@file_put_contents("{$g['tmp_path']}/hostname_rules", $rules);
-		mwexec("/sbin/ipfw -x {$cpzone} {$g['tmp_path']}/hostname_rules");
+		$cpzoneid = $a_cp[$cpzone]['zoneid'];
+		mwexec("/sbin/ipfw -x {$cpzoneid} {$g['tmp_path']}/hostname_rules");
 		unset($rules);
 		
 		header("Location: services_captiveportal_hostname.php?zone={$cpzone}");

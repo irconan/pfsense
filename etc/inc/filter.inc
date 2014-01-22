@@ -58,6 +58,26 @@ $filterdns = array();
 /* Used for aliases and interface macros */
 $aliases = "";
 
+/* Reserved table names to avoid colision */
+$reserved_table_names = array(
+	"bogons",
+	"bogonsv6",
+	"negate_networks",
+	"snort2c",
+	"sshlockout",
+	"tonatsubnets",
+	"virusprot",
+	"vpn_networks",
+	"webConfiguratorlockout");
+
+function fix_rule_label($descr) {
+	$descr = str_replace('"', '', $descr);
+	if (strlen($descr) > 63)
+		return substr($descr, 0, 60) . "...";
+	else
+		return $descr;
+}
+
 function is_bogonsv6_used() {
 	global $config, $g;
 	# Only use bogonsv6 table if IPv6 Allow is on, and at least 1 enabled interface also has "blockbogons" enabled.
@@ -234,9 +254,6 @@ function filter_configure_sync($delete_states_if_needed = true) {
 	}
 
 	$limitrules = "";
-	/* Define the maximum number of tables the system can handle (should be at least aliases*2+some spare) */
-	$maxtables = is_numeric($config['system']['maximumtables']) ? $config['system']['maximumtables'] : "3000";
-	$limitrules .= "set limit tables {$maxtables}\n";
 	/* User defined maximum table entries in Advanced menu. */
 	if ($config['system']['maximumtableentries'] <> "" && is_numeric($config['system']['maximumtableentries']))
 		$limitrules .= "set limit table-entries {$config['system']['maximumtableentries']}\n";
@@ -300,7 +317,7 @@ function filter_configure_sync($delete_states_if_needed = true) {
 	}
 
 	@file_put_contents("{$g['tmp_path']}/rules.limits", $limitrules);
-	mwexec("/sbin/pfctl -f {$g['tmp_path']}/rules.limits");
+	mwexec("/sbin/pfctl -Of {$g['tmp_path']}/rules.limits");
 	unset($rules, $limitrules);
 
 	if(isset($config['system']['developerspew'])) {
@@ -778,8 +795,11 @@ function filter_get_vpns_list() {
 			foreach ($config['openvpn']["openvpn-$type"] as $settings) {
 				if(is_array($settings)) {
 					if (!isset($settings['disable'])) {
-						if (is_subnet($settings['remote_network']) && $settings['remote_network'] <> "0.0.0.0/0")
-							$vpns_arr[] = $settings['remote_network'];
+						$remote_networks = explode(',', $settings['remote_network']);
+						foreach ($remote_networks as $remote_network) {
+							if (is_subnet($remote_network) && ($remote_network <> "0.0.0.0/0"))
+								$vpns_arr[] = $remote_network;
+						}
 						if (is_subnet($settings['tunnel_network']) && $settings['tunnel_network'] <> "0.0.0.0/0")
 							$vpns_arr[] = $settings['tunnel_network'];
 					}
@@ -1322,6 +1342,142 @@ function filter_generate_reflection_proxy($rule, $nordr, $rdr_ifs, $srcaddr, $ds
 	return $natrules;
 }
 
+function filter_nat_rules_automatic_tonathosts($with_descr = false) {
+	global $config, $FilterIflist, $GatewaysList;
+
+	$tonathosts = array("127.0.0.0/8");
+	$descriptions = array(gettext("localhost"), gettext("localhost"));
+
+	foreach (get_staticroutes() as $route) {
+		$netip = explode("/", $route['network']);
+		if (isset($GatewaysList[$route['gateway']])) {
+			$gateway =& $GatewaysList[$route['gateway']];
+			if(!interface_has_gateway($gateway['interface']) && is_private_ip($netip[0])) {
+				$tonathosts[] = $route['network'];
+				$descriptions[] = gettext("static route");
+			}
+		}
+	}
+
+	/* create outbound nat entries for all local networks */
+	foreach($FilterIflist as $ocname => $oc) {
+		if(interface_has_gateway($ocname))
+			continue;
+		if(is_ipaddr($oc['alias-address'])) {
+			$tonathosts[] = "{$oc['alias-address']}/{$oc['alias-subnet']}";
+			$descriptions[] = $oc['descr'] . " " . gettext("DHCP alias address");
+		}
+		if($oc['sa']) {
+			$tonathosts[] = "{$oc['sa']}/{$oc['sn']}";
+			$descriptions[] = $oc['descr'];
+		}
+	}
+
+	/* PPTP subnet */
+	if(($config['pptpd']['mode'] == "server" ) && is_private_ip($config['pptpd']['remoteip'])) {
+		if (isset($config['pptpd']['n_pptp_units']) && is_numeric($config['pptpd']['n_pptp_units']))
+			$pptp_subnets = ip_range_to_subnet_array($config['pptpd']['remoteip'],
+				long2ip32(ip2long($config['pptpd']['remoteip'])+($config['pptpd']['n_pptp_units']-1)));
+		else
+			$pptp_subnets = ip_range_to_subnet_array($config['pptpd']['remoteip'],
+				long2ip32(ip2long($config['pptpd']['remoteip'])));
+
+		foreach ($pptp_subnets as $subnet) {
+			$tonathosts[] = $subnet;
+			$descriptions[] = gettext("PPTP server");
+		}
+	}
+
+	/* PPPoE subnet */
+	if (is_array($FilterIflist['pppoe']))
+		foreach ($FilterIflist['pppoe'] as $pppoe)
+			if(is_private_ip($pppoe['ip'])) {
+				$tonathosts[] = "{$pppoe['sa']}/{$pppoe['sn']}";
+				$descriptions[] = gettext("PPPoE server");
+			}
+
+	/* L2TP subnet */
+	if(isset($FilterIflist['l2tp']) && $FilterIflist['l2tp']['mode'] == "server") {
+		$l2tp_sa = $FilterIflist['l2tp']['sa'];
+		$l2tp_sn = $FilterIflist['l2tp']['sn'];
+		if(is_private_ip($l2tp_sa) && !empty($l2tp_sn)) {
+			$tonathosts[] = "{$l2tp_sa}/{$l2tp_sn}";
+			$descriptions[] = gettext("L2TP server");
+		}
+	}
+
+	/* add openvpn interfaces */
+	if(is_array($config['openvpn']['openvpn-server']))
+		foreach ($config['openvpn']['openvpn-server'] as $ovpnsrv)
+			if (!empty($ovpnsrv['tunnel_network'])) {
+				$tonathosts[] = $ovpnsrv['tunnel_network'];
+				$descriptions[] = gettext("OpenVPN server");
+			}
+
+	if(is_array($config['openvpn']['openvpn-client']))
+		foreach ($config['openvpn']['openvpn-client'] as $ovpncli)
+			if (!empty($ovpncli['tunnel_network'])) {
+				$tonathosts[] = $ovpncli['tunnel_network'];
+				$descriptions[] = gettext("OpenVPN client");
+			}
+
+	/* IPsec mode_cfg subnet */
+	if (isset($config['ipsec']['client']['enable']) &&
+	    !empty($config['ipsec']['client']['pool_address']) &&
+	    !empty($config['ipsec']['client']['pool_netbits'])) {
+		$tonathosts[] = "{$config['ipsec']['client']['pool_address']}/{$config['ipsec']['client']['pool_netbits']}";
+		$descriptions[] = gettext("IPsec client");
+	}
+
+	if ($with_descr) {
+		$combined = array();
+		foreach ($tonathosts as $idx => $subnet) {
+			$combined[] = array(
+				"subnet" => $subnet,
+				"descr" => $descriptions[$idx]);
+		}
+
+		return $combined;
+	} else
+		return $tonathosts;
+}
+
+function filter_nat_rules_outbound_automatic($src) {
+	global $config, $FilterIflist;
+
+	$rules = array();
+	foreach ($FilterIflist as $if => $ifcfg) {
+		if (substr($ifcfg['if'], 0, 4) == "ovpn")
+			continue;
+		if (!interface_has_gateway($if))
+			continue;
+
+		$natent = array();
+		$natent['interface'] = $if;
+		$natent['source']['network'] = $src;
+		$natent['dstport'] = "500";
+		$natent['target'] = $ifcfg['ip'];
+		$natent['destination']['any'] = true;
+		$natent['staticnatport'] = true;
+		$natent['descr'] = gettext('Auto created rule for ISAKMP');
+		$rules[] = $natent;
+
+		$natent = array();
+		$natent['interface'] = $if;
+		$natent['source']['network'] = $src;
+		$natent['sourceport'] = "";
+		$natent['target'] = $ifcfg['ip'];
+		$natent['destination']['any'] = true;
+		$natent['natport'] = "";
+		$natent['descr'] = gettext('Auto created rule');
+		if (isset($ifcfg['nonat']))
+			$natent['nonat'] = true;
+		$rules[] = $natent;
+	}
+
+	return $rules;
+}
+
 /* Generate a 'nat on' or 'no nat on' rule for given interface */
 function filter_nat_rules_generate_if($if, $src = "any", $srcport = "", $dst = "any", $dstport = "", $natip = "", $natport = "", $nonat = false, $staticnatport = false, $proto = "", $poolopts = "") {
 	global $config, $FilterIflist;
@@ -1547,12 +1703,14 @@ function filter_nat_rules_generate() {
 		}
 	}
 
-	$natrules .= "\n# Outbound NAT rules\n";
-	/* outbound rules - advanced or standard */
-	if(isset($config['nat']['advancedoutbound']['enable'])) {
+	if ($config['nat']['outbound']['mode'] == "disabled")
+		$natrules .= "\n# Outbound NAT rules are disabled\n";
+
+	if ($config['nat']['outbound']['mode'] == "advanced" || $config['nat']['outbound']['mode'] == "hybrid") {
+		$natrules .= "\n# Outbound NAT rules (manual)\n";
 		/* advanced outbound rules */
-		if(is_array($config['nat']['advancedoutbound']['rule'])) {
-			foreach ($config['nat']['advancedoutbound']['rule'] as $obent) {
+		if(is_array($config['nat']['outbound']['rule'])) {
+			foreach ($config['nat']['outbound']['rule'] as $obent) {
 				if (isset($obent['disabled']))
 					continue;
 				update_filter_reload_status(sprintf(gettext("Creating advanced outbound rule %s"), $obent['descr']));
@@ -1585,113 +1743,45 @@ function filter_nat_rules_generate() {
 				);
 			}
 		}
-	} else {
+	}
+
+	/* outbound rules */
+	if (!isset($config['nat']['outbound']['mode']) ||
+	    $config['nat']['outbound']['mode'] == "automatic" ||
+	    $config['nat']['outbound']['mode'] == "hybrid") {
+		$natrules .= "\n# Outbound NAT rules (automatic)\n";
 		/* standard outbound rules (one for each interface) */
 		update_filter_reload_status(gettext("Creating outbound NAT rules"));
-		$tonathosts = "";
-		$numberofnathosts = 0;
+		$tonathosts_array = filter_nat_rules_automatic_tonathosts();
+		$tonathosts = implode(" ", $tonathosts_array);
+		$numberofnathosts = count($tonathosts_array);
 
-		foreach (get_staticroutes() as $route) {
-			$netip = explode("/", $route['network']);
-			if (isset($GatewaysList[$route['gateway']])) {
-				$gateway =& $GatewaysList[$route['gateway']];
-				$gatewayip = $gateway['gateway'];
-				$interfacegw = $gateway['interface'];
-				if(!interface_has_gateway($gateway['interface']) && is_private_ip($netip[0])) {
-					$numberofnathosts++;
-					$tonathosts .= "{$route['network']} ";
-				}
-			}
-		}
-		/* create outbound nat entries for all local networks */
-		foreach($FilterIflist as $ocname => $oc) {
-			if(!interface_has_gateway($ocname)) {
-				if(is_ipaddr($oc['alias-address'])) {
-					$aliastarget = $oc['alias-address'];
-					$aliassubnet = $oc['alias-subnet'];
-					$numberofnathosts++;
-					$tonathosts .= "{$oc['sa']}/{$oc['sn']} ";
-				}
-				if($oc['sa']) {
-					$tonathosts .= "{$oc['sa']}/{$oc['sn']} ";
-					$numberofnathosts++;
-				}
-			}
-		}
-		/* PPTP subnet */
-		if(($config['pptpd']['mode'] == "server" ) && is_private_ip($config['pptpd']['remoteip'])) {
-			if (isset($config['pptpd']['n_pptp_units']) && is_numeric($config['pptpd']['n_pptp_units']))
-				$pptp_subnets = ip_range_to_subnet_array($config['pptpd']['remoteip'], long2ip32(ip2long($config['pptpd']['remoteip'])+($config['pptpd']['n_pptp_units']-1)));
-			else
-				$pptp_subnets = ip_range_to_subnet_array($config['pptpd']['remoteip'], long2ip32(ip2long($config['pptpd']['remoteip'])));
-			$numberofnathosts += count($pptp_subnets);
-			$tonathosts .= implode(" ", $pptp_subnets) . " ";
-		}
-		/* PPPoE subnet */
-		if (is_array($FilterIflist['pppoe'])) {
-			foreach ($FilterIflist['pppoe'] as $pppoe) {
-				if(is_private_ip($pppoe['ip'])) {
-					$numberofnathosts++;
-					$tonathosts .= "{$pppoe['sa']}/{$pppoe['sn']} ";
-				}
-			}
-		}
-		/* L2TP subnet */
-		if(isset($FilterIflist['l2tp']) && $FilterIflist['l2tp']['mode'] == "server") {
-			$l2tp_subnet = $FilterIflist['l2tp']['sn'];
-			if(is_private_ip($FilterIflist['l2tp']['sa']) && !empty($l2tp_subnet)) {
-				$numberofnathosts++;
-				$tonathosts .= "{$FilterIflist['l2tp']['sa']}/{$l2tp_subnet} ";
-			}
-		}
-		/* add openvpn interfaces */
-		if(is_array($config['openvpn']['openvpn-server'])) {
-			foreach ($config['openvpn']['openvpn-server'] as $ovpnsrv) {
-				if (!empty($ovpnsrv['tunnel_network'])) {
-					$numberofnathosts++;
-					$tonathosts .= "{$ovpnsrv['tunnel_network']} ";
-				}
-			}
-		}
-		if(is_array($config['openvpn']['openvpn-client'])) {
-			foreach ($config['openvpn']['openvpn-client'] as $ovpnsrv) {
-				if (!empty($ovpnsrv['tunnel_network'])) {
-					$numberofnathosts++;
-					$tonathosts .= "{$ovpnsrv['tunnel_network']} ";
-				}
-			}
-		}
-		/* IPsec mode_cfg subnet */
-		if (isset($config['ipsec']['client']['enable']) &&
-			!empty($config['ipsec']['client']['pool_address']) &&
-			!empty($config['ipsec']['client']['pool_netbits'])) {
-			$tonathosts .= "{$config['ipsec']['client']['pool_address']}/{$config['ipsec']['client']['pool_netbits']} ";
-		}
 		$natrules .= "\n# Subnets to NAT \n";
-		$tonathosts .= "127.0.0.0/8 0.0.0.0 ";
-		if($numberofnathosts > 4) {
-			$natrules .= "table <tonatsubnets> { {$tonathosts} }\n";
-			$macroortable = "<tonatsubnets>";
-		} else if($numberofnathosts > 0) {
-			$natrules .= "tonatsubnets	= \"{ {$tonathosts} }\"\n";
-			$macroortable = "\$tonatsubnets";
-		}
-		if($numberofnathosts > 0):
-			foreach ($FilterIflist as $if => $ifcfg) {
-				if (substr($ifcfg['if'], 0, 4) == "ovpn")
-					continue;
-				update_filter_reload_status(sprintf(gettext('Creating outbound rules %1$s - (%2$s)'), $if, $ifcfg['descr']));
-				if(interface_has_gateway($if)) {
-					$target = $ifcfg['ip'];
-					/* create outbound nat entries for all local networks */
-					$natrules .= filter_nat_rules_generate_if($if,
-						"{$macroortable}", 500, "", 500, $target, 500, false);
-					$natrules .= filter_nat_rules_generate_if($if,
-						"{$macroortable}", null, "", null, $target, null, isset($ifcfg['nonat']));
-					$natrules .= "\n";
-				}
+		if ($numberofnathosts > 0) {
+			update_filter_reload_status(gettext('Creating automatic outbound rules'));
+
+			if ($numberofnathosts > 4) {
+				$natrules .= "table <tonatsubnets> { {$tonathosts} }\n";
+				$macroortable = "<tonatsubnets>";
+			} else {
+				$natrules .= "tonatsubnets	= \"{ {$tonathosts} }\"\n";
+				$macroortable = "\$tonatsubnets";
 			}
-		endif;
+
+			$a_outs = filter_nat_rules_outbound_automatic($macroortable);
+			foreach ($a_outs as $a_out) {
+				$natrules .= filter_nat_rules_generate_if($a_out['interface'],
+					$a_out['source']['network'],
+					$a_out['sourceport'],
+					$a_out['destination']['address'],
+					$a_out['dstport'],
+					$a_out['target'],
+					$a_out['natport'],
+					isset($a_out['nonat']),
+					isset($a_out['staticnatport']));
+			}
+		}
+		unset($tonathosts, $tonathosts_array, $numberofnathosts);
 	}
 
 	/* load balancer anchor */
@@ -1943,7 +2033,7 @@ function filter_generate_user_rule_arr($rule) {
 	$ret['rule'] = $line;
 	$ret['interface'] = $rule['interface'];
 	if($rule['descr'] != "" and $line != "")
-		$ret['descr'] = "label \"USER_RULE: " . str_replace('"', '', substr($rule['descr'], 0, 52)) . "\"";
+		$ret['descr'] = "label \"" . fix_rule_label("USER_RULE: {$rule['descr']}") . "\"";
 	else
 		$ret['descr'] = "label \"USER_RULE\"";
 
@@ -2389,6 +2479,9 @@ function filter_generate_user_rule($rule) {
 		} else
 			$aline['flags'] .= "keep state ";
 
+		if ($noadvoptions == false && isset($rule['nopfsync']))
+			$rule['nopfsync'] = true;
+
 		if ($noadvoptions == false || $l7_present)
 			if ((isset($rule['source-track']) and $rule['source-track'] <> "") or
 			    (isset($rule['max']) and $rule['max'] <> "") or
@@ -2399,10 +2492,12 @@ function filter_generate_user_rule($rule) {
 			      (isset($rule['max-src-conn']) and $rule['max-src-conn'] <> "") or
 			      (isset($rule['max-src-conn-rate']) and $rule['max-src-conn-rate'] <> "") or
 			      (isset($rule['max-src-conn-rates']) and $rule['max-src-conn-rates'] <> ""))) or
-			    isset($rule['sloppy']) or $l7_present) {
+			    isset($rule['sloppy']) or isset($rule['nopfsync']) or $l7_present) {
 					$aline['flags'] .= "( ";
 					if (isset($rule['sloppy']))
 						$aline['flags'] .= "sloppy ";
+					if (isset($rule['nopfsync']))
+						$aline['flags'] .= "no-sync ";
 					if (isset($rule['source-track']) and $rule['source-track'] <> "")
 						$aline['flags'] .= "source-track rule ";
 					if (isset($rule['max']) and $rule['max'] <> "")
@@ -2474,6 +2569,9 @@ function filter_generate_user_rule($rule) {
 		}
 	}
 
+	if (!empty($rule['tracker']))
+		$aline['tracker'] = "tracker {$rule['tracker']} ";
+
 	$line = "";
 	/* exception(s) to a user rules can go here. */
 	/* rules with a gateway or pool should create another rule for routing to vpns */
@@ -2483,7 +2581,7 @@ function filter_generate_user_rule($rule) {
 		$line .= $aline['type'] . $aline['direction'] . $aline['log'] . $aline['quick'] .
 			$aline['interface'] . $aline['ipprotocol'] . $aline['prot'] . $aline['src'] . $aline['os'] .
 			$negate_networks . $aline['icmp-type'] . $aline['icmp6-type'] . $aline['tag'] . $aline['tagged'] .
-			$aline['vlanprio'] . $aline['vlanprioset'] . $aline['dscp'] . $aline['allowopts'] . $aline['flags'] .
+			$aline['vlanprio'] . $aline['vlanprioset'] . $aline['dscp'] . $aline['tracker'] . $aline['allowopts'] . $aline['flags'] .
 			$aline['queue'] . $aline['dnpipe'] . $aline['schedlabel'] .
 			" label \"NEGATE_ROUTE: Negate policy routing for destination\"\n";
 
@@ -2491,7 +2589,7 @@ function filter_generate_user_rule($rule) {
 	/* piece together the actual user rule */
 	$line .= $aline['type'] . $aline['direction'] . $aline['log'] . $aline['quick'] . $aline['interface'] .
 		$aline['reply'] . $aline['route'] . $aline['ipprotocol'] . $aline['prot'] . $aline['src'] . $aline['os'] . $aline['dst'] .
-		$aline['divert'] . $aline['icmp-type'] . $aline['icmp6-type'] . $aline['tag'] . $aline['tagged'] . $aline['dscp'] .
+		$aline['divert'] . $aline['icmp-type'] . $aline['icmp6-type'] . $aline['tag'] . $aline['tagged'] . $aline['dscp'] . $aline['tracker'] .
 		$aline['vlanprio'] . $aline['vlanprioset'] . $aline['allowopts'] . $aline['flags'] . $aline['queue'] . $aline['dnpipe'] . $aline['schedlabel'];
 
 	unset($aline);
@@ -2501,6 +2599,8 @@ function filter_generate_user_rule($rule) {
 
 function filter_rules_generate() {
 	global $config, $g, $FilterIflist, $time_based_rules, $GatewaysList;
+
+	$fix_rule_label = 'fix_rule_label';
 
 	update_filter_reload_status(gettext("Creating default rules"));
 	if(isset($config['system']['developerspew'])) {
@@ -2664,12 +2764,12 @@ EOD;
 # block bogon networks
 # http://www.cymru.com/Documents/bogon-bn-nonagg.txt
 # http://www.team-cymru.org/Services/Bogons/fullbogons-ipv6.txt
-block in $bogonlog quick on \${$oc['descr']} from <bogons> to any label "block bogon IPv4 networks from {$oc['descr']}"
+block in $bogonlog quick on \${$oc['descr']} from <bogons> to any label "{$fix_rule_label("block bogon IPv4 networks from {$oc['descr']}")}"
 
 EOD;
 			if(isset($config['system']['ipv6allow'])) {
 				$ipfrules .= <<<EOD
-block in $bogonlog quick on \${$oc['descr']} from <bogonsv6> to any label "block bogon IPv6 networks from {$oc['descr']}"
+block in $bogonlog quick on \${$oc['descr']} from <bogonsv6> to any label "{$fix_rule_label("block bogon IPv6 networks from {$oc['descr']}")}"
 
 EOD;
 			}
@@ -2696,12 +2796,12 @@ EOD;
 				$ipfrules .= <<<EOD
 # block anything from private networks on interfaces with the option set
 antispoof for \${$oc['descr']}
-block in $privnetlog quick on \${$oc['descr']} from 10.0.0.0/8 to any label "Block private networks from {$oc['descr']} block 10/8"
-block in $privnetlog quick on \${$oc['descr']} from 127.0.0.0/8 to any label "Block private networks from {$oc['descr']} block 127/8"
-block in $privnetlog quick on \${$oc['descr']} from 100.64.0.0/10 to any label "Block private networks from {$oc['descr']} block 100.64/10"
-block in $privnetlog quick on \${$oc['descr']} from 172.16.0.0/12 to any label "Block private networks from {$oc['descr']} block 172.16/12"
-block in $privnetlog quick on \${$oc['descr']} from 192.168.0.0/16 to any label "Block private networks from {$oc['descr']} block 192.168/16"
-block in $privnetlog quick on \${$oc['descr']} from fc00::/7 to any label "Block ULA networks from {$oc['descr']} block fc00::/7"
+block in $privnetlog quick on \${$oc['descr']} from 10.0.0.0/8 to any label "{$fix_rule_label("Block private networks from {$oc['descr']} block 10/8")}"
+block in $privnetlog quick on \${$oc['descr']} from 127.0.0.0/8 to any label "{$fix_rule_label("Block private networks from {$oc['descr']} block 127/8")}"
+block in $privnetlog quick on \${$oc['descr']} from 100.64.0.0/10 to any label "{$fix_rule_label("Block private networks from {$oc['descr']} block 100.64/10")}"
+block in $privnetlog quick on \${$oc['descr']} from 172.16.0.0/12 to any label "{$fix_rule_label("Block private networks from {$oc['descr']} block 172.16/12")}"
+block in $privnetlog quick on \${$oc['descr']} from 192.168.0.0/16 to any label "{$fix_rule_label("Block private networks from {$oc['descr']} block 192.168/16")}"
+block in $privnetlog quick on \${$oc['descr']} from fc00::/7 to any label "{$fix_rule_label("Block ULA networks from {$oc['descr']} block fc00::/7")}"
 
 EOD;
 			}
@@ -2710,16 +2810,16 @@ EOD;
 		case "pptp":
 				$ipfrules .= <<<EOD
 # allow PPTP client
-pass in on \${$oc['descr']} proto tcp from any to any port = 1723 flags S/SA modulate state label "allow PPTP client on {$oc['descr']}"
-pass in on \${$oc['descr']} proto gre from any to any keep state label "allow PPTP client on {$oc['descr']}"
+pass in on \${$oc['descr']} proto tcp from any to any port = 1723 flags S/SA modulate state label "{$fix_rule_label("allow PPTP client on {$oc['descr']}")}"
+pass in on \${$oc['descr']} proto gre from any to any keep state label "{$fix_rule_label("allow PPTP client on {$oc['descr']}")}"
 
 EOD;
 			break;
 		case "dhcp":
 			$ipfrules .= <<<EOD
 # allow our DHCP client out to the {$oc['descr']}
-pass in on \${$oc['descr']} proto udp from any port = 67 to any port = 68 label "allow dhcp client out {$oc['descr']}"
-pass out on \${$oc['descr']} proto udp from any port = 68 to any port = 67 label "allow dhcp client out {$oc['descr']}"
+pass in on \${$oc['descr']} proto udp from any port = 67 to any port = 68 label "{$fix_rule_label("allow dhcp client out {$oc['descr']}")}"
+pass out on \${$oc['descr']} proto udp from any port = 68 to any port = 67 label "{$fix_rule_label("allow dhcp client out {$oc['descr']}")}"
 # Not installing DHCP server firewall rules for {$oc['descr']} which is configured for DHCP.
 
 EOD;
@@ -2762,23 +2862,23 @@ EOD;
 		case "dhcp6":
 			$ipfrules .= <<<EOD
 # allow our DHCPv6 client out to the {$oc['descr']}
-pass in quick on \${$oc['descr']} proto udp from fe80::/10 port = 546 to fe80::/10 port = 546 label "allow dhcpv6 client in {$oc['descr']}"
-pass in quick on \${$oc['descr']} proto udp from any port = 547 to any port = 546 label "allow dhcpv6 client in {$oc['descr']}"
-pass out quick on \${$oc['descr']} proto udp from any port = 546 to any port = 547 label "allow dhcpv6 client out {$oc['descr']}"
+pass in quick on \${$oc['descr']} proto udp from fe80::/10 port = 546 to fe80::/10 port = 546 label "{$fix_rule_label("allow dhcpv6 client in {$oc['descr']}")}"
+pass in quick on \${$oc['descr']} proto udp from any port = 547 to any port = 546 label "{$fix_rule_label("allow dhcpv6 client in {$oc['descr']}")}"
+pass out quick on \${$oc['descr']} proto udp from any port = 546 to any port = 547 label "{$fix_rule_label("allow dhcpv6 client out {$oc['descr']}")}"
 
 EOD;
 			break;
 		case "6rd":
 			$ipfrules .= <<<EOD
 # allow our proto 41 traffic from the 6RD border relay in
-pass in on \${$oc['descr']} proto 41 from {$config['interfaces'][$on]['gateway-6rd']} to any label "Allow 6in4 traffic in for 6rd on {$oc['descr']}"
-pass out on \${$oc['descr']} proto 41 from any to {$config['interfaces'][$on]['gateway-6rd']} label "Allow 6in4 traffic out for 6rd on {$oc['descr']}"
+pass in on \${$oc['descr']} proto 41 from {$config['interfaces'][$on]['gateway-6rd']} to any label "{$fix_rule_label("Allow 6in4 traffic in for 6rd on {$oc['descr']}")}"
+pass out on \${$oc['descr']} proto 41 from any to {$config['interfaces'][$on]['gateway-6rd']} label "{$fix_rule_label("Allow 6in4 traffic out for 6rd on {$oc['descr']}")}"
 
 EOD;
 		if (is_ipaddrv6($oc['ipv6'])) {
 			$ipfrules .= <<<EOD
-pass in on \${$oc['descr']} inet6 from any to {$oc['ipv6']}/{$oc['snv6']} label "Allow 6rd traffic in for 6rd on {$oc['descr']}"
-pass out on \${$oc['descr']} inet6 from {$oc['ipv6']}/{$oc['snv6']} to any label "Allow 6rd traffic out for 6rd on {$oc['descr']}"
+pass in on \${$oc['descr']} inet6 from any to {$oc['ipv6']}/{$oc['snv6']} label "{$fix_rule_label("Allow 6rd traffic in for 6rd on {$oc['descr']}")}"
+pass out on \${$oc['descr']} inet6 from {$oc['ipv6']}/{$oc['snv6']} to any label "{$fix_rule_label("Allow 6rd traffic out for 6rd on {$oc['descr']}")}"
 
 EOD;
 		}
@@ -2787,15 +2887,15 @@ EOD;
 			if (is_ipaddrv4($oc['ip'])) {
 			$ipfrules .= <<<EOD
 # allow our proto 41 traffic from the 6to4 border relay in
-pass in on \${$oc['descr']} proto 41 from any to {$oc['ip']} label "Allow 6in4 traffic in for 6to4 on {$oc['descr']}"
-pass out on \${$oc['descr']} proto 41 from {$oc['ip']} to any label "Allow 6in4 traffic out for 6to4 on {$oc['descr']}"
+pass in on \${$oc['descr']} proto 41 from any to {$oc['ip']} label "{$fix_rule_label("Allow 6in4 traffic in for 6to4 on {$oc['descr']}")}"
+pass out on \${$oc['descr']} proto 41 from {$oc['ip']} to any label "{$fix_rule_label("Allow 6in4 traffic out for 6to4 on {$oc['descr']}")}"
 
 EOD;
 		}
 		if (is_ipaddrv6($oc['ipv6'])) {
 			$ipfrules .= <<<EOD
-pass in on \${$oc['descr']} inet6 from any to {$oc['ipv6']}/{$oc['snv6']} label "Allow 6in4 traffic in for 6to4 on {$oc['descr']}"
-pass out on \${$oc['descr']} inet6 from {$oc['ipv6']}/{$oc['snv6']} to any label "Allow 6in4 traffic out for 6to4 on {$oc['descr']}"
+pass in on \${$oc['descr']} inet6 from any to {$oc['ipv6']}/{$oc['snv6']} label "{$fix_rule_label("Allow 6in4 traffic in for 6to4 on {$oc['descr']}")}"
+pass out on \${$oc['descr']} inet6 from {$oc['ipv6']}/{$oc['snv6']} to any label "{$fix_rule_label("Allow 6in4 traffic out for 6to4 on {$oc['descr']}")}"
 
 EOD;
 		}
@@ -2854,7 +2954,10 @@ EOD;
 			$ipfrules .= "pass out route-to ( {$ifcfg['if']} {$gw} ) from {$ifcfg['ip']} to !{$ifcfg['sa']}/{$ifcfg['sn']} keep state allow-opts label \"let out anything from firewall host itself\"\n";
 			if (is_array($ifcfg['vips'])) {
 				foreach ($ifcfg['vips'] as $vip)
-					$ipfrules .= "pass out route-to ( {$ifcfg['if']} {$gw} ) from {$vip['ip']} to !{$vip['ip']}/{$vip['sn']} keep state allow-opts label \"let out anything from firewall host itself\"\n";
+					if (ip_in_subnet($vip['ip'], "{$ifcfg['sa']}/{$ifcfg['sn']}"))
+						$ipfrules .= "pass out route-to ( {$ifcfg['if']} {$gw} ) from {$vip['ip']} to !{$ifcfg['sa']}/{$ifcfg['sn']} keep state allow-opts label \"let out anything from firewall host itself\"\n";
+					else
+						$ipfrules .= "pass out route-to ( {$ifcfg['if']} {$gw} ) from {$vip['ip']} to !" . gen_subnet($vip['ip'], $vip['sn']) . "/{$vip['sn']} keep state allow-opts label \"let out anything from firewall host itself\"\n";
 			}
 		}
 
@@ -2909,7 +3012,7 @@ EOD;
 		if(is_ipaddr($pptpdtarget) and is_array($FilterIflist['wan'])) {
 			$ipfrules .= <<<EOD
 # PPTPd rules
-pass in on \${$FilterIflist['wan']['descr']} proto tcp from any to $pptpdtarget port = 1723 modulate state label "allow pptpd {$pptpdtarget}"
+pass in on \${$FilterIflist['wan']['descr']} proto tcp from any to $pptpdtarget port = 1723 modulate state label "{$fix_rule_label("allow pptpd {$pptpdtarget}")}"
 pass in on \${$FilterIflist['wan']['descr']} proto gre from any to any keep state label "allow gre pptpd"
 
 EOD;
@@ -3381,15 +3484,16 @@ function filter_generate_ipsec_rules() {
 				}
 			}
 
-			if(preg_match("/^[a-z0-9]+_vip/i", $ph1ent['interface'])) {
-				$parentinterface = link_carp_interface_to_parent($ph1ent['interface']);
-			} else {
+			if (strstr($ph1ent['interface'], "_vip"))
+				list($parentinterface, $vhid) = explode("_vhid", $ph1ent['interface']);
+			else
 				$parentinterface = $ph1ent['interface'];
-			}
 			if (empty($FilterIflist[$parentinterface]['descr'])) {
-				$ipfrules = "# Could not locate interface for IPsec: {$descr}\n";
+				$ipfrules .= "# Could not locate interface for IPsec: {$descr}\n";
 				continue;
 			}
+
+			unset($gateway);
 			/* add endpoint routes to correct gateway on interface */
 			if((is_ipaddrv4($rgip)) && (interface_has_gateway($parentinterface))) {
 				$gateway = get_interface_gateway($parentinterface);

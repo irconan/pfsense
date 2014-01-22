@@ -1479,7 +1479,7 @@ msgid "Could not write Igmpproxy configuration file!"
 msgstr "Igmpproxy yapılandırma dosyasına yazılamıyor!"
 
 #: etc/inc/services.inc:956
-msgid "Started Igmpproxy service sucsesfully."
+msgid "Started Igmpproxy service successfully."
 msgstr "Igmpproxy servisi başarıyla çalıştırıldı."
 
 #: etc/inc/services.inc:980 etc/inc/services.inc:1109
@@ -8536,7 +8536,7 @@ msgstr "başka giriş ekle"
 #: usr/local/www/firewall_shaper_vinterface.php:102
 msgid ""
 "This pipe/queue is referenced in filter rules, please remove references from "
-"there before deleteing."
+"there before deleting."
 msgstr ""
 "Bu kuyruk / boru filitre kurallarında kullanımda, lütfen silmeden önce "
 "kullanımda olan kuralı kaldırınız."

@@ -38,8 +38,8 @@
 	pfSense_MODULE:	utils
 */
 
-define('DYNDNS_PROVIDER_VALUES', 'dnsomatic dyndns dyndns-static dyndns-custom dhs dyns easydns noip noip-free ods zoneedit loopia freedns dnsexit opendns namecheap he-net he-net-v6 he-net-tunnelbroker selfhost route53 cloudflare custom custom-v6 eurodns gratisdns');
-define('DYNDNS_PROVIDER_DESCRIPTIONS', 'DNS-O-Matic,DynDNS (dynamic),DynDNS (static),DynDNS (custom),DHS,DyNS,easyDNS,No-IP,No-IP (free),ODS.org,ZoneEdit,Loopia,freeDNS,DNSexit,OpenDNS,Namecheap,HE.net,HE.net (v6),HE.net Tunnelbroker,SelfHost,Route 53,CloudFlare,Custom,Custom (v6),Euro Dns,GratisDNS');
+define('DYNDNS_PROVIDER_VALUES', 'dnsomatic dyndns dyndns-static dyndns-custom dhs dyns easydns noip noip-free ods zoneedit loopia freedns dnsexit opendns namecheap he-net he-net-v6 he-net-tunnelbroker selfhost route53 cloudflare custom custom-v6 eurodns gratisdns ovh-dynhost citynetwork');
+define('DYNDNS_PROVIDER_DESCRIPTIONS', 'DNS-O-Matic,DynDNS (dynamic),DynDNS (static),DynDNS (custom),DHS,DyNS,easyDNS,No-IP,No-IP (free),ODS.org,ZoneEdit,Loopia,freeDNS,DNSexit,OpenDNS,Namecheap,HE.net,HE.net (v6),HE.net Tunnelbroker,SelfHost,Route 53,CloudFlare,Custom,Custom (v6),Euro Dns,GratisDNS,OVH DynHOST,City Network');
 
 /* implement ipv6 route advertising deamon */
 function services_radvd_configure() {
@@ -408,6 +408,7 @@ log-facility local7;
 one-lease-per-client true;
 deny duplicates;
 ping-check true;
+update-conflict-detection false;
 
 EOD;
 
@@ -616,7 +617,7 @@ EOPP;
 			if (isset($poolconf['denyunknown']))
 			   $dhcpdconf .= "		deny unknown-clients;\n";
 
-			if ($poolconf['gateway'] && ($poolconf['gateway'] != $dhcpifconf['gateway']))
+			if ($poolconf['gateway'] && $poolconf['gateway'] != "none" && ($poolconf['gateway'] != $dhcpifconf['gateway']))
 				$dhcpdconf .= "		option routers {$poolconf['gateway']};\n";
 
 			if($dhcpifconf['failover_peerip'] <> "") {
@@ -687,9 +688,11 @@ EOPP;
 		}
 // End of settings inside pools
 
-		if ($dhcpifconf['gateway']) {
+		if ($dhcpifconf['gateway'] && $dhcpifconf['gateway'] != "none") {
 			$routers = $dhcpifconf['gateway'];
 			$add_routers = true;
+		} elseif ($dhcpifconf['gateway'] == "none") {
+			$add_routers = false;
 		} else {
 			$routers = $ifcfgip;
 		}
@@ -835,48 +838,20 @@ EOD;
 
 		$dhcpdifs[] = get_real_interface($dhcpif);
 		if ($newzone['domain-name'])
+		{
+			if ($need_ddns_updates)
+			{
+				$newzone['dns-servers'] = array($dhcpifconf['ddnsdomainprimary']);
+			}
 			$ddns_zones[] = $newzone;
+		}
 	}
 
 	if ($need_ddns_updates) {
 		$dhcpdconf .= "ddns-update-style interim;\n";
-		$dhcpdconf .= "update-static-leases on;\n";
-		
-		if (is_array($ddns_zones)) {
-			$added_zones = array();
-			foreach ($ddns_zones as $zone) {
-				if (!is_array($zone) || empty($zone) || !is_array($zone['dns-servers']))
-					continue;
-				$primary = $zone['dns-servers'][0];
-				$secondary = empty($zone['dns-servers'][1]) ? "" : $zone['dns-servers'][1];
-				// Make sure we aren't using any invalid or IPv6 DNS servers.
-				if (!is_ipaddrv4($primary)) {
-					if (is_ipaddrv4($secondary)) {
-						$primary = $secondary;
-						$secondary = "";
-					} else {
-						continue;
-					}
-				}
-				// We don't need to add zones multiple times.
-				if (!in_array($zone['domain-name'], $added_zones)) {
-					$dhcpdconf .= "zone {$zone['domain-name']} {\n";
-					$dhcpdconf .= "	primary {$primary};\n";
-					if (is_ipaddrv4($secondary))
-						$dhcpdconf .= "	secondary {$secondary};\n";
-					$dhcpdconf .= "}\n";
-					$added_zones[] = $zone['domain-name'];
-				}
-				if (!in_array($zone['ptr-domain'], $added_zones)) {
-					$dhcpdconf .= "zone {$zone['ptr-domain']} {\n";
-					$dhcpdconf .= "	primary {$primary};\n";
-					if (is_ipaddrv4($secondary))
-						$dhcpdconf .= "	secondary {$secondary};\n";
-					$dhcpdconf .= "}\n";
-					$added_zones[] = $zone['ptr-domain'];
-				}
-			}
-		}
+
+		$dhcpdconf .= dhcpdkey($dhcpifconf);
+		$dhcpdconf .= dhcpdzones($ddns_zones, $dhcpifconf);
 	}
 
 	/* write dhcpd.conf */
@@ -901,6 +876,69 @@ EOD;
 		print "done.\n";
 
 	return 0;
+}
+
+function dhcpdkey($dhcpifconf)
+{
+	$dhcpdconf = "";
+	if ($dhcpifconf['ddnsdomainkeyname'] <> "" && $dhcpifconf['ddnsdomainkey'] <> "")
+	{
+		$dhcpdconf .= "key {$dhcpifconf['ddnsdomainkeyname']} {\n";
+		$dhcpdconf .= "	algorithm hmac-md5;\n";
+		$dhcpdconf .= "	secret {$dhcpifconf['ddnsdomainkey']};\n";
+		$dhcpdconf .= "}\n";
+	}
+
+	return $dhcpdconf;
+}
+
+function dhcpdzones($ddns_zones, $dhcpifconf)
+{
+	$dhcpdconf = "";
+
+	if (is_array($ddns_zones)) {
+		$added_zones = array();
+		foreach ($ddns_zones as $zone) {
+			if (!is_array($zone) || empty($zone) || !is_array($zone['dns-servers']))
+				continue;
+			$primary = $zone['dns-servers'][0];
+			$secondary = empty($zone['dns-servers'][1]) ? "" : $zone['dns-servers'][1];
+
+			// Make sure we aren't using any invalid or IPv6 DNS servers.
+			if (!is_ipaddrv4($primary)) {
+				if (is_ipaddrv4($secondary)) {
+					$primary = $secondary;
+					$secondary = "";
+				} else {
+					continue;
+				}
+			}
+
+			// We don't need to add zones multiple times.
+			if ($zone['domain-name'] && !in_array($zone['domain-name'], $added_zones)) {
+				$dhcpdconf .= "zone {$zone['domain-name']}. {\n";
+				$dhcpdconf .= "	primary {$primary};\n";
+				if (is_ipaddrv4($secondary))
+					$dhcpdconf .= "	secondary {$secondary};\n";
+				if($dhcpifconf['ddnsdomainkeyname'] <> "" && $dhcpifconf['ddnsdomainkey'] <> "")
+                    $dhcpdconf .= "	key {$dhcpifconf['ddnsdomainkeyname']};\n";
+				$dhcpdconf .= "}\n";
+				$added_zones[] = $zone['domain-name'];
+			}
+			if ($zone['ptr-domain'] && !in_array($zone['ptr-domain'], $added_zones)) {
+				$dhcpdconf .= "zone {$zone['ptr-domain']} {\n";
+				$dhcpdconf .= "	primary {$primary};\n";
+				if (is_ipaddrv4($secondary))
+					$dhcpdconf .= "	secondary {$secondary};\n";
+				if($dhcpifconf['ddnsdomainkeyname'] <> "" && $dhcpifconf['ddnsdomainkey'] <> "")
+                    $dhcpdconf .= "	key {$dhcpifconf['ddnsdomainkeyname']};\n";
+				$dhcpdconf .= "}\n";
+				$added_zones[] = $zone['ptr-domain'];
+			}
+		}
+	}
+
+	return $dhcpdconf;
 }
 
 function services_dhcpdv6_configure() {
@@ -990,6 +1028,7 @@ function services_dhcpdv6_configure() {
 
 				$dhcpdv6cfg[$ifname]['prefixrange']['from'] = Net_IPv6::compress($range['start']);
 				$dhcpdv6cfg[$ifname]['prefixrange']['to'] = Net_IPv6::compress($range['end']);
+				$dhcpdv6cfg[$ifname]['dns6ip'] = get_interface_ipv6($ifname);
 			}
 		}
 	}
@@ -1012,10 +1051,10 @@ option domain-search-list code 119 = text;
 default-lease-time 7200;
 max-lease-time 86400;
 log-facility local7;
-ddns-update-style none;
 one-lease-per-client true;
 deny duplicates;
 ping-check true;
+update-conflict-detection false;
 
 EOD;
 
@@ -1028,7 +1067,11 @@ EOD;
 	$dhcpdv6ifs = array();
 
 	$dhcpv6num = 0;
+	$nsupdate = false;
+
 	foreach ($dhcpdv6cfg as $dhcpv6if => $dhcpv6ifconf) {
+
+		$ddns_zones = array();
 
 		$ifcfgv6 = $config['interfaces'][$dhcpv6if];
 
@@ -1049,15 +1092,16 @@ EOD;
 			$dnscfgv6 .= "	option domain-name \"{$dhcpv6ifconf['domain']}\";\n";
 		}
 
-    		if ($dhcpv6ifconf['domainsearchlist'] <> "") {
+    	if ($dhcpv6ifconf['domainsearchlist'] <> "") {
 			$dnscfgv6 .= "	option domain-search \"" . join("\",\"", preg_split("/[ ;]+/", $dhcpv6ifconf['domainsearchlist'])) . "\";\n";
-    		}
+    	}
 
 		if (isset($dhcpv6ifconf['ddnsupdate'])) {
 			if($dhcpv6ifconf['ddnsdomain'] <> "") {
 				$dnscfgv6 .= "	ddns-domainname \"{$dhcpv6ifconf['ddnsdomain']}\";\n";
 			}
 			$dnscfgv6 .= "	ddns-update-style interim;\n";
+			$nsupdate = true;
 		}
 
 		if (is_array($dhcpv6ifconf['dnsserver']) && ($dhcpv6ifconf['dnsserver'][0])) {
@@ -1075,6 +1119,13 @@ EOD;
 				$dnscfgv6 .= "	option dhcp6.name-servers " . join(",", $dns_arrv6) . ";";
 		}
 
+		if ($dhcpv6ifconf['domain']) {
+			$newzone = array();
+			$newzone['domain-name'] = $dhcpv6ifconf['domain']; 
+			$newzone['dns-servers'][] = $dhcpv6ifconf['ddnsdomainprimary'];
+			$ddns_zones[] = $newzone;
+		}
+
 		if (is_ipaddrv6($ifcfgipv6)) {
 			$dhcpdv6conf .= "subnet6 {$subnetv6}/{$ifcfgsnv6}";
 		} else {
@@ -1082,9 +1133,6 @@ EOD;
 			$dhcpdv6conf .= "subnet6 {$subnet6}/64";
 		}
 		$dhcpdv6conf .= " {\n";
-
-		if (isset($dhcpv6ifconf['denyunknown']))
-		   $dhcpdv6conf .= "		deny unknown-clients;\n";
 
 		$dhcpdv6conf .= <<<EOD
 	range6 {$dhcpv6ifconf['range']['from']} {$dhcpv6ifconf['range']['to']};
@@ -1094,6 +1142,9 @@ EOD;
 
 		if (is_ipaddrv6($dhcpv6ifconf['prefixrange']['from']) && is_ipaddrv6($dhcpv6ifconf['prefixrange']['to'])) {
 			$dhcpdv6conf .= "	prefix6 {$dhcpv6ifconf['prefixrange']['from']} {$dhcpv6ifconf['prefixrange']['to']}/{$dhcpv6ifconf['prefixrange']['prefixlength']};\n";
+		}
+		if (is_ipaddrv6($dhcpv6ifconf['dns6ip'])) {
+			$dhcpdv6conf .= "       option dhcp6.name-servers {$dhcpv6ifconf['dns6ip']};\n";
 		}
     		// default-lease-time
 		if ($dhcpv6ifconf['defaultleasetime'])
@@ -1175,6 +1226,12 @@ EOD;
 			}
 		}
 
+		if ($dhcpv6ifconf['domain'])
+		{
+			$dhcpdv6conf .= dhcpdkey($dhcpv6ifconf);
+			$dhcpdv6conf .= dhcpdzones($ddns_zones, $dhcpv6ifconf);
+		}
+
 		if ($config['dhcpdv6'][$dhcpv6if]['ramode'] <> "unmanaged") {
 			if(preg_match("/poes/si", $dhcpv6if)) {
 				/* magic here */
@@ -1191,6 +1248,15 @@ EOD;
 				$dhcpdv6ifs[] = $realif;
 			}
 		}
+	}
+
+	if ($nsupdate)
+	{
+		$dhcpdv6conf .= "ddns-update-style interim;\n";
+	}
+	else
+	{
+		$dhcpdv6conf .= "ddns-update-style none;\n";
 	}
 
 	/* write dhcpdv6.conf */
@@ -1368,8 +1434,7 @@ function services_dhcrelay_configure() {
 			if (is_array($config['gateways']['gateway_item'])) {
 				foreach ($config['gateways']['gateway_item'] as $gateway) {
 					if (isset($gateway['defaultgw'])) {
-						$a_gateways = return_gateways_array(true);
-                                        	$destif = $a_gateways[$rtent['gateway']]['interface'];
+						$destif = $gateway['interface'];
 						break;
 					}
 				}
@@ -1487,8 +1552,7 @@ function services_dhcrelay6_configure() {
 			if (is_array($config['gateways']['gateway_item'])) {
 				foreach ($config['gateways']['gateway_item'] as $gateway) {
 					if (isset($gateway['defaultgw'])) {
-						$a_gateways = return_gateways_array(true);
-                                        	$destif = $a_gateways[$rtent['gateway']]['interface'];
+						$destif = $gateway['interface'];
 						break;
 					}
 				}
@@ -2228,7 +2292,7 @@ function install_cron_job($command, $active=false, $minute="0", $hour="*", $mont
 			write_config(sprintf(gettext("Updated cron job for %s"), $command));
 		}
 	} else {
-		if(($is_installed == true) && ($x > 0)) {
+		if($is_installed == true) {
 			unset($config['cron']['item'][$x]);
 			write_config(sprintf(gettext("Removed cron job for %s"), $command));
 		}

@@ -794,8 +794,13 @@ function is_inrange_v6($test, $start, $end) {
 		return false;
 }
 
-/* return the configured carp interface list */
-function get_configured_carp_interface_list() {
+/* returns true if $test is in the range between $start and $end */
+function is_inrange($test, $start, $end) {
+	return is_ipaddrv6($test) ? is_inrange_v6($test, $start, $end) : is_inrange_v4($test, $start, $end);
+}
+
+/* XXX: return the configured carp interface list */
+function get_configured_carp_interface_list($carpinterface = "", $family = "inet") {
 	global $config;
 
 	$iflist = array();
@@ -805,8 +810,16 @@ function get_configured_carp_interface_list() {
 		foreach ($viparr as $vip) {
 			switch ($vip['mode']) {
 			case "carp":
-				$vipif = "{$vip['interface']}_vip{$vip['vhid']}";
-				$iflist[$vipif] = $vip['subnet'];
+				if (!empty($carpinterface)) {
+					if ($carpinterface == "{$vip['interface']}_vip{$vip['vhid']}") {
+						if ($family == "inet" && is_ipaddrv4($vip['subnet']))
+							return $vip['subnet'];
+						else if ($family == "inet6" && is_ipaddrv6($vip['subnet']))
+							return $vip['subnet'];
+					}
+				} else {
+					$iflist["{$vip['interface']}_vip{$vip['vhid']}"] = $vip['subnet'];
+				}
 				break;
 			}
 		}
@@ -844,8 +857,12 @@ function get_configured_vips_list() {
 
 	if(is_array($config['virtualip']['vip'])) {
 		$viparr = &$config['virtualip']['vip'];
-		foreach ($viparr as $vip)
-			$alias_list[] = array("ipaddr" => $vip['subnet'], "if" => $vip['interface']);
+		foreach ($viparr as $vip) {
+			if ($vip['mode'] == "carp")
+				$alias_list[] = array("ipaddr" => $vip['subnet'], "if" => "{$vip['interface']}_vip{$vip['vhid']}");
+			else
+				$alias_list[] = array("ipaddr" => $vip['subnet'], "if" => $vip['interface']);
+		}
 	}
 
 	return $alias_list;
@@ -1175,7 +1192,9 @@ function mwexec($command, $mute = false, $clearsigmask = false) {
 	if(($retval <> 0) && ($mute === false)) {
 		$output = implode(" ", $oarr);
 		log_error(sprintf(gettext("The command '%1\$s' returned exit code '%2\$d', the output was '%3\$s' "), $command, $retval, $output));
+		unset($output);
 	}
+	unset($oarr);
 	return $retval;
 }
 
@@ -1600,8 +1619,13 @@ function set_sysctl($values) {
  */
 function get_memory() {
 
-	$physmem = trim(`sysctl -n hw.physmem`, " \n");
-	$realmem = trim(`sysctl -n hw.realmem`, " \n");
+	$output = "";
+	$_gb = exec("/sbin/sysctl -n hw.physmem", $output);
+	$physmem = trim($output[0], " \n");
+	unset($output);
+	$_gb = exec("/sbin/sysctl -n hw.physmem", $output);
+	$realmem = trim($output[0], " \n");
+	unset($output, $_gb);
 	/* convert from bytes to megabytes */
 	return array(($physmem/1048576),($realmem/1048576));
 }
@@ -2057,6 +2081,16 @@ function get_current_theme() {
 		if(strstr($_SERVER['HTTP_USER_AGENT'], $useragent))
 			$theme = (empty($g['theme_lowres']) && (is_dir($g["www_path"].'/themes/'.$g['theme_lowres']))) ? "pfsense" : $g['theme_lowres'];
 	return $theme;
+}
+
+/* Define what is preferred, IPv4 or IPv6 */
+function prefer_ipv4_or_ipv6() {
+	global $config;
+
+	if (isset($config['system']['prefer_ipv4']))
+		mwexec("/etc/rc.d/ip6addrctl prefer_ipv4");
+	else
+		mwexec("/etc/rc.d/ip6addrctl prefer_ipv6");
 }
 
 ?>

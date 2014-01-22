@@ -6,11 +6,6 @@
 	<theme>pfsense_ng</theme>
 	<sysctl>
 		<item>
-			<descr><![CDATA[Enable mounting the FS read only with more checks.]]></descr>
-			<tunable>vfs.forcesync</tunable>
-			<value>default</value>
-		</item>
-		<item>
 			<descr><![CDATA[Disable the pf ftp proxy handler.]]></descr>
 			<tunable>debug.pfftpproxy</tunable>
 			<value>default</value>
@@ -128,11 +123,6 @@
 		<item>
 			<descr><![CDATA[Disable CTRL+ALT+Delete reboot from keyboard.]]></descr>
 			<tunable>hw.syscons.kbd_reboot</tunable>
-			<value>default</value>
-		</item>
-		<item>
-			<descr><![CDATA[Enable TCP Inflight mode]]></descr>
-			<tunable>net.inet.tcp.inflight.enable</tunable>
 			<value>default</value>
 		</item>
 		<item>
@@ -401,9 +391,25 @@
 	</captiveportal>
 	-->
 	<nat>
-		<ipsecpassthru>
-			<enable/>
-		</ipsecpassthru>
+		<outbound>
+			<mode>automatic</mode>
+			<!--
+			<rule>
+				<interface></interface>
+				<source>
+					<network>xxx.xxx.xxx.xxx/xx</network>
+				</source>
+				<destination>
+					<not/>
+					<any/>
+					*or*
+					<network>xxx.xxx.xxx.xxx/xx</network>
+				</destination>
+				<target>xxx.xxx.xxx.xxx</target>
+				<descr></descr>
+			</rule>
+			-->
+		</outbound>
 		<!--
 		<rule>
 			<interface></interface>
@@ -423,25 +429,6 @@
 			<subnet></subnet>
 			<descr></descr>
 		</onetoone>
-		-->
-		<!--
-		<advancedoutbound>
-			<enable/>
-			<rule>
-				<interface></interface>
-				<source>
-					<network>xxx.xxx.xxx.xxx/xx</network>
-				</source>
-				<destination>
-					<not/>
-					<any/>
-					*or*
-					<network>xxx.xxx.xxx.xxx/xx</network>
-				</destination>
-				<target>xxx.xxx.xxx.xxx</target>
-				<descr></descr>
-			</rule>
-		</advancedoutbound>
 		-->
 		<!--
 		<servernat>
@@ -643,15 +630,6 @@
 		-->
 	</proxyarp>
 	<cron>
-		<item>
-			<minute>0</minute>
-			<hour>*</hour>
-			<mday>*</mday>
-			<month>*</month>
-			<wday>*</wday>
-			<who>root</who>
-			<command>/usr/bin/nice -n20 newsyslog</command>
-		</item>
 		<item>
 			<minute>1,31</minute>
 			<hour>0-5</hour>

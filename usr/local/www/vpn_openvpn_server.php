@@ -97,6 +97,8 @@ if($_GET['act']=="new"){
 	$pconfig['local_port'] = openvpn_port_next('UDP');
 	$pconfig['pool_enable'] = "yes";
 	$pconfig['cert_depth'] = 1;
+	// OpenVPN Defaults to SHA1
+	$pconfig['digest'] = "SHA1";
 }
 
 if($_GET['act']=="edit"){
@@ -133,6 +135,8 @@ if($_GET['act']=="edit"){
 		} else
 			$pconfig['shared_key'] = base64_decode($a_server[$id]['shared_key']);
 		$pconfig['crypto'] = $a_server[$id]['crypto'];
+		// OpenVPN Defaults to SHA1 if unset
+		$pconfig['digest'] = !empty($a_server[$id]['digest']) ? $a_server[$id]['digest'] : "SHA1";
 		$pconfig['engine'] = $a_server[$id]['engine'];
 
 		$pconfig['tunnel_network'] = $a_server[$id]['tunnel_network'];
@@ -381,6 +385,7 @@ if ($_POST) {
 			$server['shared_key'] = base64_encode($pconfig['shared_key']);
 		}
 		$server['crypto'] = $pconfig['crypto'];
+		$server['digest'] = $pconfig['digest'];
 		$server['engine'] = $pconfig['engine'];
 
 		$server['tunnel_network'] = $pconfig['tunnel_network'];
@@ -1060,6 +1065,24 @@ if ($savemsg)
 							</select>
 						</td>
 					</tr>
+					<tr>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Auth Digest Algorithm"); ?></td>
+						<td width="78%" class="vtable">
+							<select name="digest" class="formselect">
+								<?php
+									$digestlist = openvpn_get_digestlist();
+									foreach ($digestlist as $name => $desc):
+									$selected = '';
+									if ($name == $pconfig['digest'])
+										$selected = ' selected';
+								?>
+								<option value="<?=$name;?>"<?=$selected?>>
+									<?=htmlspecialchars($desc);?>
+								</option>
+								<?php endforeach; ?>
+							</select>
+						</td>
+					</tr>
 					<tr id="engine">
 						<td width="22%" valign="top" class="vncellreq"><?=gettext("Hardware Crypto"); ?></td>
 						<td width="78%" class="vtable">
@@ -1307,19 +1330,18 @@ if ($savemsg)
 					<tr>
 						<td width="22%" valign="top" class="vncell"><?=gettext("Compression"); ?></td>
 						<td width="78%" class="vtable">
-							<table border="0" cellpadding="2" cellspacing="0">
-								<tr>
-									<td>
-										<?php set_checked($pconfig['compression'],$chk); ?>
-										<input name="compression" type="checkbox" value="yes" <?=$chk;?>>
-									</td>
-									<td>
-										<span class="vexpl">
-											<?=gettext("Compress tunnel packets using the LZO algorithm"); ?>.
-										</span>
-									</td>
-								</tr>
-							</table>
+							<select name="compression" class="formselect">
+								<?php
+									foreach ($openvpn_compression_modes as $cmode => $cmodedesc):
+									$selected = '';
+									if ($cmode == $pconfig['compression'])
+										$selected = ' selected';
+								?>
+								<option value="<?= $cmode ?>" <?= $selected ?>><?= $cmodedesc ?></option>
+								<?php endforeach; ?>
+							</select>
+							<br/>
+							<?=gettext("Compress tunnel packets using the LZO algorithm. Adaptive compression will dynamically disable compression for a period of time if OpenVPN detects that the data in the packets is not being compressed efficiently."); ?>.
 						</td>
 					</tr>
 					<tr>

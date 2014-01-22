@@ -174,11 +174,12 @@ function captiveportal_load_modules() {
 }
 
 function captiveportal_configure() {
-	global $config, $cpzone;
+	global $config, $cpzone, $cpzoneid;
 
 	if (is_array($config['captiveportal'])) {
 		foreach ($config['captiveportal'] as $cpkey => $cp) {
 			$cpzone = $cpkey;
+			$cpzoneid = $cp['zoneid'];
 			captiveportal_configure_zone($cp);
 		}
 	} else
@@ -186,7 +187,7 @@ function captiveportal_configure() {
 }
 
 function captiveportal_configure_zone($cpcfg) {
-	global $config, $g, $cpzone;
+	global $config, $g, $cpzone, $cpzoneid;
 
 	$captiveportallck = lock("captiveportal{$cpzone}", LOCK_EX);
 	
@@ -366,7 +367,7 @@ EOD;
 		/* Release allocated pipes for this zone */
 		captiveportal_free_dnrules();
 
-		mwexec("/usr/local/sbin/ipfw_context -d {$cpzone}", true);
+		mwexec("/usr/local/sbin/ipfw zone {$cpzoneid} destory", true);
 
 		if (empty($config['captiveportal']))
 			mwexec("/sbin/sysctl net.link.ether.ipfw=0");
@@ -425,7 +426,10 @@ function captiveportal_init_webgui_zone($cpcfg) {
 		$ca = ca_chain($cert);
 
 		/* generate lighttpd configuration */
-		$listenporthttps = $cpcfg['listenporthttps'] ? $cpcfg['listenporthttps'] : ($cpcfg['zoneid'] + 1);
+		if (!empty($cpcfg['listenporthttps']))
+			$listenporthttps = $cpcfg['listenporthttps'];
+		else
+			$listenporthttps = 8001 + $cpcfg['zoneid'];
 		system_generate_lighty_config("{$g['varetc_path']}/lighty-{$cpzone}-CaptivePortal-SSL.conf",
 			$crt, $key, $ca, "lighty-{$cpzone}-CaptivePortal-SSL.pid", $listenporthttps, "/usr/local/captiveportal",
 			"cert-{$cpzone}-portal.pem", "ca-{$cpzone}-portal.pem", $cpzone);
@@ -433,6 +437,10 @@ function captiveportal_init_webgui_zone($cpcfg) {
 
 	/* generate lighttpd configuration */
 	$listenporthttp = $cpcfg['listenporthttp'] ? $cpcfg['listenporthttp'] : $cpcfg['zoneid'];
+	if (!empty($cpcfg['listenporthttp']))
+		$listenporthttp = $cpcfg['listenporthttp'];
+	else
+		$listenporthttp = 8000 + $cpcfg['zoneid'];
 	system_generate_lighty_config("{$g['varetc_path']}/lighty-{$cpzone}-CaptivePortal.conf",
 		"", "", "", "lighty-{$cpzone}-CaptivePortal.pid", $listenporthttp, "/usr/local/captiveportal",
 		"", "", $cpzone);
@@ -450,13 +458,13 @@ function captiveportal_init_webgui_zone($cpcfg) {
 
 /* reinit will disconnect all users, be careful! */
 function captiveportal_init_rules($reinit = false) {
-	global $config, $g, $cpzone;
+	global $config, $g, $cpzone, $cpzoneid;
 
 	if (!isset($config['captiveportal'][$cpzone]['enable']))
 		return;
 
 	captiveportal_load_modules();
-	mwexec("/usr/local/sbin/ipfw_context -a {$cpzone}", true);
+	mwexec("/usr/local/sbin/ipfw zone {$cpzoneid} create", true);
 
 	$cpips = array();
 	$ifaces = get_configured_interface_list();
@@ -473,7 +481,7 @@ function captiveportal_init_rules($reinit = false) {
 				if (!empty($carpif)) {
 					$carpsif = explode(" ", $carpif);
 					foreach ($carpsif as $cpcarp) {
-						mwexec("/usr/local/sbin/ipfw_context -a {$cpzone} -n {$cpcarp}", true);
+						mwexec("/usr/local/sbin/ipfw zone {$cpzoneid} madd {$cpcarp}", true);
 						$carpip = find_interface_ip($cpcarp);
 						if (is_ipaddr($carpip))
 							$cpips[] = $carpip;
@@ -481,7 +489,7 @@ function captiveportal_init_rules($reinit = false) {
 				}
 				$cpips[] = $cpipm;
 			}
-			mwexec("/usr/local/sbin/ipfw_context -a {$cpzone} -n {$tmpif}", true);
+			mwexec("/usr/local/sbin/ipfw zone {$cpzoneid} madd {$tmpif}", true);
 		}
 	}
 	if (count($cpips) > 0) {
@@ -544,13 +552,16 @@ EOD;
 	$cprules .= "add {$rulenum} pipe tablearg ip from any to table(2) out\n";
 	$rulenum++;
 
-	$listenporthttp =
-		$config['captiveportal'][$cpzone]['listenporthttp'] ?
-		$config['captiveportal'][$cpzone]['listenporthttp'] :
-		$config['captiveportal'][$cpzone]['zoneid'];
+	if (!empty($$config['captiveportal'][$cpzone]['listenporthttp']))
+		$listenporthttp = $$config['captiveportal'][$cpzone]['listenporthttp'];
+	else
+		$listenporthttp = 8000 + $$config['captiveportal'][$cpzone]['zoneid'];
 
 	if (isset($config['captiveportal'][$cpzone]['httpslogin'])) {
-		$listenporthttps = $listenporthttp + 1;
+		if (!empty($config['captiveportal'][$cpzone]['listenporthttps']))
+			$listenporthttps = $config['captiveportal'][$cpzone]['listenporthttps'];
+		else
+			$listenporthttps = 8001 + $$config['captiveportal'][$cpzone]['zoneid'];
 		$cprules .= "add 65531 fwd 127.0.0.1,{$listenporthttps} tcp from any to any dst-port 443 in\n";
 	}
 	
@@ -578,7 +589,7 @@ EOD;
 	/* load rules */
 	$cprules = "flush\n{$cprules}";
 	file_put_contents("{$g['tmp_path']}/ipfw_{$cpzone}.cp.rules", $cprules);
-	mwexec("/sbin/ipfw -x {$cpzone} -q {$g['tmp_path']}/ipfw_{$cpzone}.cp.rules", true);
+	mwexec("/sbin/ipfw -x {$cpzoneid} -q {$g['tmp_path']}/ipfw_{$cpzone}.cp.rules", true);
 	//@unlink("{$g['tmp_path']}/ipfw_{$cpzone}.cp.rules");
 	unset($cprules, $tmprules);
 
@@ -593,7 +604,7 @@ EOD;
  * (password is in Base64 and only saved when reauthentication is enabled)
  */
 function captiveportal_prune_old() {
-	global $g, $config, $cpzone;
+	global $g, $config, $cpzone, $cpzoneid;
 
 	if (empty($cpzone))
 		return;
@@ -621,12 +632,6 @@ function captiveportal_prune_old() {
 	/* NOTE: while this can be simplified in non radius case keep as is for now */
 	$cpdb = captiveportal_read_db();
 
-	/*
-	 * To make sure we iterate over ALL accounts on every run the count($cpdb) is moved
-	 * outside of the loop. Otherwise the loop would evaluate count() on every iteration
-	 * and since $i would increase and count() would decrement they would meet before we
-	 * had a chance to iterate over all accounts.
-	 */
 	$unsetindexes = array();
 	$voucher_needs_sync = false;
 	/* 
@@ -663,7 +668,7 @@ function captiveportal_prune_old() {
 		$uidletimeout = (is_numeric($cpentry[8])) ? $cpentry[8] : $idletimeout;
 		/* if an idle timeout is specified, get last activity timestamp from ipfw */
 		if (!$timedout && $uidletimeout > 0) {
-			$lastact = captiveportal_get_last_activity($cpentry[2]);
+			$lastact = captiveportal_get_last_activity($cpentry[2], $cpentry[3]);
 			/*	If the user has logged on but not sent any traffic they will never be logged out.
 			 *	We "fix" this by setting lastact to the login timestamp. 
 			 */
@@ -711,8 +716,8 @@ function captiveportal_prune_old() {
 						$cpentry[2], // clientip
 						$cpentry[3], // clientmac
 						10); // NAS Request
-					$_gb = @pfSense_ipfw_Tableaction($cpzone, IP_FW_TABLE_ZERO_ENTRY_STATS, 1, $cpentry[2]);
-					$_gb = @pfSense_ipfw_Tableaction($cpzone, IP_FW_TABLE_ZERO_ENTRY_STATS, 2, $cpentry[2]);
+					$_gb = @pfSense_ipfw_Tableaction($cpzone, IP_FW_TABLE_ZERO_ENTRY_STATS, 1, $cpentry[2], $cpentry[3]);
+					$_gb = @pfSense_ipfw_Tableaction($cpzone, IP_FW_TABLE_ZERO_ENTRY_STATS, 2, $cpentry[2], $cpentry[3]);
 					RADIUS_ACCOUNTING_START($cpentry[1], // ruleno
 						$cpentry[4], // username
 						$cpentry[5], // sessionid
@@ -726,8 +731,9 @@ function captiveportal_prune_old() {
 					else
 						$interval = 0;
 					$past_interval_min = ($session_time > $interval);
-					$within_interval = ($session_time % $interval >= 0 && $session_time % $interval <= 59);
-					if (($interval > 0 && $past_interval_min && $within_interval) || $interval === 0) {
+					if ($interval != 0)
+						$within_interval = ($session_time % $interval >= 0 && $session_time % $interval <= 59);
+					if ($interval === 0 || ($interval > 0 && $past_interval_min && $within_interval)) {
 						RADIUS_ACCOUNTING_STOP($cpentry[1], // ruleno
 							$cpentry[4], // username
 							$cpentry[5], // sessionid
@@ -772,7 +778,7 @@ function captiveportal_prune_old() {
 }
 
 function captiveportal_prune_old_automac() {
-	global $g, $config, $cpzone;
+	global $g, $config, $cpzone, $cpzoneid;
 
 	if (is_array($config['captiveportal'][$cpzone]['passthrumac']) && isset($config['captiveportal'][$cpzone]['passthrumacaddusername'])) {
 		$tmpvoucherdb = array();
@@ -825,7 +831,7 @@ function captiveportal_prune_old_automac() {
 		if (!empty($macrules)) {
 			@file_put_contents("{$g['tmp_path']}/macentry.prunerules.tmp", $macrules);
 			unset($macrules);
-			mwexec("/sbin/ipfw -x {$cpzone} -q {$g['tmp_path']}/macentry.prunerules.tmp");
+			mwexec("/sbin/ipfw -x {$cpzoneid} -q {$g['tmp_path']}/macentry.prunerules.tmp");
 		}
 		if ($writecfg === true)
 			write_config("Prune session for auto-added macs");
@@ -854,8 +860,8 @@ function captiveportal_disconnect($dbent, $radiusservers,$term_cause = 1,$stop_t
 	
 	if (is_ipaddr($dbent[2])) {
 		/* Delete client's ip entry from tables 1 and 2. */
-		$_gb = @pfSense_ipfw_Tableaction($cpzone, IP_FW_TABLE_DEL, 1, $dbent[2]);
-		$_gb = @pfSense_ipfw_Tableaction($cpzone, IP_FW_TABLE_DEL, 2, $dbent[2]);
+		$_gb = @pfSense_ipfw_Tableaction($cpzone, IP_FW_TABLE_DEL, 1, $dbent[2], $dbent[3]);
+		$_gb = @pfSense_ipfw_Tableaction($cpzone, IP_FW_TABLE_DEL, 2, $dbent[2], $dbent[3]);
 		/* XXX: Redundant?! Ensure all pf(4) states are killed. */
 		$_gb = @pfSense_kill_states($dbent[2]);
 		$_gb = @pfSense_kill_srcstates($dbent[2]);
@@ -1094,10 +1100,10 @@ function captiveportal_allowedip_configure() {
 }
 
 /* get last activity timestamp given client IP address */
-function captiveportal_get_last_activity($ip) {
+function captiveportal_get_last_activity($ip, $mac = NULL) {
 	global $cpzone;
 
-	$ipfwoutput = pfSense_ipfw_getTablestats($cpzone, 1, $ip);
+	$ipfwoutput = pfSense_ipfw_getTablestats($cpzone, 1, $ip, $mac);
 	/* Reading only from one of the tables is enough of approximation. */
 	if (is_array($ipfwoutput)) {
 		return $ipfwoutput['timestamp'];
@@ -1226,7 +1232,7 @@ function captiveportal_syslog($message) {
 }
 
 function radius($username,$password,$clientip,$clientmac,$type, $radiusctx = null) {
-	global $g, $config;
+	global $g, $config, $cpzoneid;
 
 	$pipeno = captiveportal_get_next_dn_ruleno();
 
@@ -1377,15 +1383,19 @@ function captiveportal_free_dnrules($rulenos_start = 2000, $rulenos_range_max = 
 	$cpruleslck = lock("captiveportalrulesdn", LOCK_EX);
 	if (file_exists("{$g['vardb_path']}/captiveportaldn.rules")) {
 		$rules = unserialize(file_get_contents("{$g['vardb_path']}/captiveportaldn.rules"));
-		for ($ridx = $rulenos_start; $ridx < $rulenos_range_max; $ridx++) {
+		$ridx = $rulenos_start;
+		while ($ridx < $rulenos_range_max) {
 			if ($rules[$ridx] == $cpzone) {
 				$rules[$ridx] = false;
 				$ridx++;
 				$rules[$ridx] = false;
-			}
+				$ridx++;
+			} else
+				$ridx += 2;
 		}
+		file_put_contents("{$g['vardb_path']}/captiveportaldn.rules", serialize($rules));
+		unset($rules);
 	}
-	file_put_contents("{$g['vardb_path']}/captiveportaldn.rules", serialize($rules));
 	unlock($cpruleslck);
 }
 
@@ -1396,24 +1406,28 @@ function captiveportal_get_next_dn_ruleno($rulenos_start = 2000, $rulenos_range_
 	$ruleno = 0;
 	if (file_exists("{$g['vardb_path']}/captiveportaldn.rules")) {
 		$rules = unserialize(file_get_contents("{$g['vardb_path']}/captiveportaldn.rules"));
-		for ($ridx = $rulenos_start; $ridx < $rulenos_range_max; $ridx++) {
-			if ($rules[$ridx]) {
+		$ridx = $rulenos_start;
+		while ($ridx < $rulenos_range_max) {
+			if (empty($rules[$ridx])) {
+				$ruleno = $ridx;
+				$rules[$ridx] = $cpzone;
 				$ridx++;
-				continue;
+				$rules[$ridx] = $cpzone;
+				break;
+			} else {
+				$ridx += 2;
 			}
-			$ruleno = $ridx;
-			$rules[$ridx] = $cpzone;
-			$rules[++$ridx] = $cpzone;
-			break;
 		}
 	} else {
 		$rules = array_pad(array(), $rulenos_range_max, false);
 		$ruleno = $rulenos_start;
 		$rules[$rulenos_start] = $cpzone;
-		$rules[++$rulenos_start] = $cpzone;
+		$rulenos_start++;
+		$rules[$rulenos_start] = $cpzone;
 	}
 	file_put_contents("{$g['vardb_path']}/captiveportaldn.rules", serialize($rules));
 	unlock($cpruleslck);
+	unset($rules);
 
 	return $ruleno;
 }
@@ -1425,31 +1439,35 @@ function captiveportal_free_dn_ruleno($ruleno) {
 	if (file_exists("{$g['vardb_path']}/captiveportaldn.rules")) {
 		$rules = unserialize(file_get_contents("{$g['vardb_path']}/captiveportaldn.rules"));
 		$rules[$ruleno] = false;
-		$rules[++$ruleno] = false;
+		$ruleno++;
+		$rules[$ruleno] = false;
 		file_put_contents("{$g['vardb_path']}/captiveportaldn.rules", serialize($rules));
+		unset($rules);
 	}
 	unlock($cpruleslck);
 }
 
 function captiveportal_get_dn_passthru_ruleno($value) {
-	global $config, $g, $cpzone;
+	global $config, $g, $cpzone, $cpzoneid;
 
 	$cpcfg = $config['captiveportal'][$cpzone];
 	if(!isset($cpcfg['enable']))
 		return NULL;
 
 	$cpruleslck = lock("captiveportalrulesdn", LOCK_EX);
+	$ruleno = NULL;
 	if (file_exists("{$g['vardb_path']}/captiveportaldn.rules")) {
 		$rules = unserialize(file_get_contents("{$g['vardb_path']}/captiveportaldn.rules"));
-		$ruleno = intval(`/sbin/ipfw -x {$cpzone} show | /usr/bin/grep {$value} |  /usr/bin/grep -v grep | /usr/bin/cut -d " " -f 5 | /usr/bin/head -n 1`);
-		if ($rules[$ruleno]) {
-			unlock($cpruleslck);
-			return $ruleno;
-		}
+		unset($output);
+		$_gb = exec("/sbin/ipfw -x {$cpzone} show | /usr/bin/grep {$value} |  /usr/bin/grep -v grep | /usr/bin/cut -d \" \" -f 5 | /usr/bin/head -n 1", $output);
+		$ruleno = intval($output[0]);
+		if (!$rules[$ruleno])
+			$ruleno = NULL;
+		unset($rules);
 	}
-
 	unlock($cpruleslck);
-	return NULL;
+
+	return $ruleno;
 }
 
 /*
@@ -1468,28 +1486,33 @@ function captiveportal_get_next_ipfw_ruleno($rulenos_start = 2, $rulenos_range_m
 	$ruleno = 0;
 	if (file_exists("{$g['vardb_path']}/captiveportal_{$cpzone}.rules")) {
 		$rules = unserialize(file_get_contents("{$g['vardb_path']}/captiveportal_{$cpzone}.rules"));
-		for ($ridx = 2; $ridx < ($rulenos_range_max - $rulenos_start); $ridx++) {
-			if ($rules[$ridx]) {
+		$ridx = $rulenos_start;
+		while ($ridx < $rulenos_range_max) {
+			if (empty($rules[$ridx])) {
+				$ruleno = $ridx;
+				$rules[$ridx] = $cpzone;
+				$ridx++;
+				$rules[$ridx] = $cpzone;
+				break;
+			} else {
 				/* 
 				 * This allows our traffic shaping pipes to be the in pipe the same as ruleno 
 				 * and the out pipe ruleno + 1.
 				 */
-				$ridx++;
-				continue;
+				$ridx += 2;
 			}
-			$ruleno = $ridx;
-			$rules[$ridx] = "used";
-			$rules[++$ridx] = "used";
-			break;
 		}
 	} else {
 		$rules = array_pad(array(), $rulenos_range_max, false);
-		$rules[$rulenos_start] = "used";
-		$rules[++$rulenos_start] = "used";
-		$ruleno = 2;
+		$ruleno = $rulenos_start;
+		$rules[$rulenos_start] = $cpzone;
+		$rulenos_start++;
+		$rules[$rulenos_start] = $cpzone;
 	}
 	file_put_contents("{$g['vardb_path']}/captiveportal_{$cpzone}.rules", serialize($rules));
 	unlock($cpruleslck);
+	unset($rules);
+
 	return $ruleno;
 }
 
@@ -1504,31 +1527,35 @@ function captiveportal_free_ipfw_ruleno($ruleno) {
 	if (file_exists("{$g['vardb_path']}/captiveportal_{$cpzone}.rules")) {
 		$rules = unserialize(file_get_contents("{$g['vardb_path']}/captiveportal_{$cpzone}.rules"));
 		$rules[$ruleno] = false;
-		$rules[++$ruleno] = false;
+		$ruleno++;
+		$rules[$ruleno] = false;
 		file_put_contents("{$g['vardb_path']}/captiveportal_{$cpzone}.rules", serialize($rules));
+		unset($rules);
 	}
 	unlock($cpruleslck);
 }
 
 function captiveportal_get_ipfw_passthru_ruleno($value) {
-	global $config, $g, $cpzone;
+	global $config, $g, $cpzone, $cpzoneid;
 
 	$cpcfg = $config['captiveportal'][$cpzone];
 	if(!isset($cpcfg['enable']))
 		return NULL;
 
 	$cpruleslck = lock("captiveportalrules{$cpzone}", LOCK_EX);
+	$ruleno = NULL;
 	if (file_exists("{$g['vardb_path']}/captiveportal_{$cpzone}.rules")) {
 		$rules = unserialize(file_get_contents("{$g['vardb_path']}/captiveportal_{$cpzone}.rules"));
-		$ruleno = intval(`/sbin/ipfw -x {$cpzone} show | /usr/bin/grep {$value} |  /usr/bin/grep -v grep | /usr/bin/cut -d " " -f 1 | /usr/bin/head -n 1`);
-		if ($rules[$ruleno]) {
-			unlock($cpruleslck);
-			return $ruleno;
-		}
+		unset($output);
+		$_gb = exec("/sbin/ipfw -x {$cpzone} show | /usr/bin/grep {$value} |  /usr/bin/grep -v grep | /usr/bin/cut -d \" \" -f 5 | /usr/bin/head -n 1", $output);
+		$ruleno = intval($output[0]);
+		if (!$rules[$ruleno])
+			$ruleno = NULL;
+		unset($rules);
 	}
-
 	unlock($cpruleslck);
-	return NULL;
+
+	return $ruleno;
 }
 
 /**
@@ -1542,7 +1569,7 @@ function captiveportal_get_ipfw_passthru_ruleno($value) {
  *
  */
 
-function getVolume($ip) {
+function getVolume($ip, $mac = NULL) {
 	global $config, $cpzone;
 
 	$reverse = empty($config['captiveportal'][$cpzone]['reverseacct']) ? false : true;
@@ -1550,7 +1577,7 @@ function getVolume($ip) {
 	// Initialize vars properly, since we don't want NULL vars
 	$volume['input_pkts'] = $volume['input_bytes'] = $volume['output_pkts'] = $volume['output_bytes'] = 0 ;
 
-	$ipfw = pfSense_ipfw_getTablestats($cpzone, 1, $ip);
+	$ipfw = pfSense_ipfw_getTablestats($cpzone, 1, $ip, $mac);
 	if (is_array($ipfw)) {
 		if ($reverse) {
 			$volume['output_pkts'] = $ipfw['packets'];
@@ -1751,7 +1778,7 @@ function captiveportal_reapply_attributes($cpentry, $attributes) {
 }
 
 function portal_allow($clientip,$clientmac,$username,$password = null, $attributes = null, $pipeno = null, $radiusctx = null)  {
-	global $redirurl, $g, $config, $type, $passthrumac, $_POST, $cpzone;
+	global $redirurl, $g, $config, $type, $passthrumac, $_POST, $cpzone, $cpzoneid;
 
 	// Ensure we create an array if we are missing attributes
 	if (!is_array($attributes))
@@ -1795,7 +1822,7 @@ function portal_allow($clientip,$clientmac,$username,$password = null, $attribut
 							$config['captiveportal'][$cpzone]['passthrumac'][] = $mac;
 							$macrules .= captiveportal_passthrumac_configure_entry($mac);
 							file_put_contents("{$g['tmp_path']}/macentry_{$cpzone}.rules.tmp", $macrules);
-							mwexec("/sbin/ipfw -x {$cpzone} -q {$g['tmp_path']}/macentry_{$cpzone}.rules.tmp");
+							mwexec("/sbin/ipfw -x {$cpzoneid} -q {$g['tmp_path']}/macentry_{$cpzone}.rules.tmp");
 							$writecfg = true;
 							$sessionid = true;
 							break;
@@ -1895,7 +1922,7 @@ function portal_allow($clientip,$clientmac,$username,$password = null, $attribut
 			unlock($cpdblck);
 			$macrules = captiveportal_passthrumac_configure_entry($mac);
 			file_put_contents("{$g['tmp_path']}/macentry_{$cpzone}.rules.tmp", $macrules);
-			mwexec("/sbin/ipfw -x {$cpzone} -q {$g['tmp_path']}/macentry_{$cpzone}.rules.tmp");
+			mwexec("/sbin/ipfw -x {$cpzoneid} -q {$g['tmp_path']}/macentry_{$cpzone}.rules.tmp");
 			$writecfg = true;
 		} else {
 			/* See if a pipeno is passed, if not start sessions because this means there isn't one atm */
@@ -1953,6 +1980,7 @@ function portal_allow($clientip,$clientmac,$username,$password = null, $attribut
 			/* store information to database */
 			captiveportal_write_db($insertquery);
 			unlock($cpdblck);
+			unset($insertquery, $bpassword);
 
 			if (isset($config['captiveportal'][$cpzone]['radacct_enable']) && !empty($radiusservers[$radiusctx])) {
 				$acct_val = RADIUS_ACCOUNTING_START($pipeno, $username, $sessionid, $radiusservers[$radiusctx], $clientip, $clientmac);

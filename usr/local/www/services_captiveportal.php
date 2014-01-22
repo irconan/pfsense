@@ -38,12 +38,20 @@
 ##|*MATCH=services_captiveportal.php*
 ##|-PRIV
 
-require_once("guiconfig.inc");
 require_once("functions.inc");
 require_once("filter.inc");
 require_once("shaper.inc");
 require_once("captiveportal.inc");
 
+if (substr($_GET['act'], 0, 3) == "get")
+	$nocsrf = true;
+
+require_once("guiconfig.inc");
+
+global $cpzone;
+global $cpzoneid;
+
+$cpzoneid = 1; /* Just a default */
 $cpzone = $_GET['zone'];
 if (isset($_POST['zone']))
 	$cpzone = $_POST['zone'];
@@ -64,13 +72,58 @@ if ($_GET['act'] == "viewhtml") {
 	if ($a_cp[$cpzone] && $a_cp[$cpzone]['page']['htmltext'])
 		echo base64_decode($a_cp[$cpzone]['page']['htmltext']);
 	exit;
+} else if ($_GET['act'] == "gethtmlhtml" && $a_cp[$cpzone] && $a_cp[$cpzone]['page']['htmltext']) {
+	$file_data = base64_decode($a_cp[$cpzone]['page']['htmltext']);
+	$file_size = strlen($file_data);
+
+	header("Content-Type: text/html");
+	header("Content-Disposition: attachment; filename=portal.html");
+	header("Content-Length: $file_size");
+	echo $file_data;
+
+	exit;
+} else if ($_GET['act'] == "delhtmlhtml" && $a_cp[$cpzone] && $a_cp[$cpzone]['page']['htmltext']) {
+	unset($a_cp[$cpzone]['page']['htmltext']);
+	write_config(sprintf(gettext("Captive Portal: zone %s: Restore default portal page"), $cpzone));
+	header("Location: services_captiveportal.php?zone={$cpzone}");
+	exit;
 } else if ($_GET['act'] == "viewerrhtml") {
 	if ($a_cp[$cpzone] && $a_cp[$cpzone]['page']['errtext'])
 		echo base64_decode($a_cp[$cpzone]['page']['errtext']);
 	exit;
+} else if ($_GET['act'] == "geterrhtml" && $a_cp[$cpzone] && $a_cp[$cpzone]['page']['errtext']) {
+	$file_data = base64_decode($a_cp[$cpzone]['page']['errtext']);
+	$file_size = strlen($file_data);
+
+	header("Content-Type: text/html");
+	header("Content-Disposition: attachment; filename=err.html");
+	header("Content-Length: $file_size");
+	echo $file_data;
+
+	exit;
+} else if ($_GET['act'] == "delerrhtml" && $a_cp[$cpzone] && $a_cp[$cpzone]['page']['errtext']) {
+	unset($a_cp[$cpzone]['page']['errtext']);
+	write_config(sprintf(gettext("Captive Portal: zone %s: Restore default error page"), $cpzone));
+	header("Location: services_captiveportal.php?zone={$cpzone}");
+	exit;
 } else if ($_GET['act'] == "viewlogouthtml") {
 	if ($a_cp[$cpzone] && $a_cp[$cpzone]['page']['logouttext'])
 		echo base64_decode($a_cp[$cpzone]['page']['logouttext']);
+	exit;
+} else if ($_GET['act'] == "getlogouthtml" && $a_cp[$cpzone] && $a_cp[$cpzone]['page']['logouttext']) {
+	$file_data = base64_decode($a_cp[$cpzone]['page']['logouttext']);
+	$file_size = strlen($file_data);
+
+	header("Content-Type: text/html");
+	header("Content-Disposition: attachment; filename=logout.html");
+	header("Content-Length: $file_size");
+	echo $file_data;
+
+	exit;
+} else if ($_GET['act'] == "dellogouthtml" && $a_cp[$cpzone] && $a_cp[$cpzone]['page']['logouttext']) {
+	unset($a_cp[$cpzone]['page']['logouttext']);
+	write_config(sprintf(gettext("Captive Portal: zone %s: Restore default logout page"), $cpzone));
+	header("Location: services_captiveportal.php?zone={$cpzone}");
 	exit;
 }
 
@@ -85,7 +138,7 @@ if (!is_array($config['cert']))
 $a_cert =& $config['cert'];
 
 if ($a_cp[$cpzone]) {
-	$pconfig['zoneid'] = $a_cp[$cpzone]['zoneid'];
+	$cpzoneid = $pconfig['zoneid'] = $a_cp[$cpzone]['zoneid'];
 	$pconfig['cinterface'] = $a_cp[$cpzone]['interface'];
 	$pconfig['maxproc'] = $a_cp[$cpzone]['maxproc'];
 	$pconfig['maxprocperip'] = $a_cp[$cpzone]['maxprocperip'];
@@ -248,10 +301,12 @@ if ($_POST) {
 		$newcp =& $a_cp[$cpzone];
 		//$newcp['zoneid'] = $a_cp[$cpzone]['zoneid'];
 		if (empty($newcp['zoneid'])) {
-			$newcp['zoneid'] = 8000;
-			foreach ($a_cp as $keycpzone => $cp)
+			$newcp['zoneid'] = 2;
+			foreach ($a_cp as $keycpzone => $cp) {
 				if ($cp['zoneid'] == $newcp['zoneid'] && $keycpzone != $cpzone)
 					$newcp['zoneid'] += 2; /* Resreve space for SSL config if needed */
+			}
+			$cpzoneid = $newcp['zoneid'];
 		}
 		$oldifaces = explode(",", $newcp['interface']);
 		if (is_array($_POST['cinterface']))
@@ -344,7 +399,7 @@ if ($_POST) {
 		if (!empty($toremove)) {
 			foreach ($toremove as $removeif) {
 				$removeif = get_real_interface($removeif);
-				mwexec("/usr/local/sbin/ipfw_context -d {$cpzone} -x {$removeif}");
+				mwexec("/usr/local/sbin/ipfw zone {$cpzone} mdel {$removeif}");
 			}
 		}
 		captiveportal_configure_zone($newcp);
@@ -932,6 +987,12 @@ function enable_change(enable_change) {
 		?>
 		<?php if ($pconfig['page']['htmltext']): ?>
 		<a href="<?=$href?>" target="_new"><?=gettext("View current page"); ?></a>
+		<br />
+		<a href="?zone=<?=$cpzone?>&amp;act=gethtmlhtml" target="_blank"><?=gettext("Download current page"); ?></a>
+		<br />
+		<a href="?zone=<?=$cpzone?>&amp;act=delhtmlhtml" onclick="return confirm('Do you really want to restore default page?')" target="_blank">
+			<?=gettext("Restore default portal page"); ?>
+		</a>
 		  <br>
 		  <br>
 		<?php endif; ?>
@@ -966,6 +1027,12 @@ function enable_change(enable_change) {
 		<input name="errfile" type="file" class="formfld file" id="errfile"><br>
 		<?php if ($pconfig['page']['errtext']): ?>
 		<a href="?zone=<?=$cpzone?>&amp;act=viewerrhtml" target="_blank"><?=gettext("View current page"); ?></a>
+		<br />
+		<a href="?zone=<?=$cpzone?>&amp;act=geterrhtml" target="_blank"><?=gettext("Download current page"); ?></a>
+		<br />
+		<a href="?zone=<?=$cpzone?>&amp;act=delerrhtml" onclick="return confirm('Do you really want to restore default page?')" target="_blank">
+			<?=gettext("Restore default error page"); ?>
+		</a>
 		  <br>
 		  <br>
 		<?php endif; ?>
@@ -980,6 +1047,12 @@ function enable_change(enable_change) {
 		<input name="logoutfile" type="file" class="formfld file" id="logoutfile"><br>
 		<?php if ($pconfig['page']['logouttext']): ?>
 		<a href="?zone=<?=$cpzone?>&amp;act=viewlogouthtml" target="_blank"><?=gettext("View current page"); ?></a>
+		<br />
+		<a href="?zone=<?=$cpzone?>&amp;act=getlogouthtml" target="_blank"><?=gettext("Download current page"); ?></a>
+		<br />
+		<a href="?zone=<?=$cpzone?>&amp;act=dellogouthtml" onclick="return confirm('Do you really want to restore default page?')" target="_blank">
+			<?=gettext("Restore default logout page"); ?>
+		</a>
 		  <br>
 		  <br>
 		<?php endif; ?>

@@ -33,7 +33,7 @@
 	pfSense_BUILDER_BINARIES:	/usr/sbin/powerd	/usr/bin/killall	/sbin/sysctl	/sbin/route
 	pfSense_BUILDER_BINARIES:	/bin/hostname	/bin/ls	/usr/sbin/syslogd	
 	pfSense_BUILDER_BINARIES:	/usr/sbin/pccardd	/usr/local/sbin/lighttpd	/bin/chmod 	/bin/mkdir
-	pfSense_BUILDER_BINARIES:	/usr/bin/tar		/usr/local/bin/ntpd	/usr/local/bin/ntpdate
+	pfSense_BUILDER_BINARIES:	/usr/bin/tar		/usr/local/sbin/ntpd	/usr/local/sbin/ntpdate
 	pfSense_BUILDER_BINARIES:	/usr/bin/nohup	/sbin/dmesg	/usr/local/sbin/atareinit	/sbin/kldload
 	pfSense_BUILDER_BINARIES:	/usr/local/sbin/filterdns
 	pfSense_MODULE:	utils
@@ -81,9 +81,9 @@ function activate_sysctls() {
 		foreach($config['sysctl']['item'] as $tunable) {
 			if($tunable['value'] == "default") {
 				$value = get_default_sysctl_value($tunable['tunable']);
-				mwexec("/sbin/sysctl " . $tunable['tunable'] . "=\"" . $value .  "\"");
+				mwexec("/sbin/sysctl " . $tunable['tunable'] . "=\"" . $value .  "\"", true);
 			} else { 
-				mwexec("/sbin/sysctl " . $tunable['tunable'] . "=\"" . $tunable['value'] .  "\"");
+				mwexec("/sbin/sysctl " . $tunable['tunable'] . "=\"" . $tunable['value'] .  "\"", true);
 			}
 		}
 	}
@@ -627,11 +627,11 @@ function system_syslogd_start() {
 		$log_size = "";
 	} else if (isset($config['system']['usefifolog'])) {
 		$log_directive = "|/usr/sbin/fifolog_writer ";
-		$log_size = "10240";
+		$log_size = isset($config['syslog']['logfilesize']) ? $config['syslog']['logfilesize'] : "10240";
 		$log_create_directive = "/usr/sbin/fifolog_create -s ";
 	} else { // Defaults to CLOG
 		$log_directive = "%";
-		$log_size = "10240";
+		$log_size = isset($config['syslog']['logfilesize']) ? $config['syslog']['logfilesize'] : "10240";
 		$log_create_directive = "/usr/sbin/clog -i -s ";
 	}
 	
@@ -769,7 +769,23 @@ EOD;
 		if (!is_dir("{$g['dhcpd_chroot_path']}/var/run"))
 			exec("/bin/mkdir -p {$g['dhcpd_chroot_path']}/var/run");
 
-		$retval = mwexec_bg("/usr/sbin/syslogd -s -c -c -l {$g['dhcpd_chroot_path']}/var/run/log -f {$g['varetc_path']}/syslog.conf");
+		$sourceip = "";
+		if (!empty($syslogcfg['sourceip'])) {
+			if ($syslogcfg['ipproto'] == "ipv6") {
+				$ifaddr = is_ipaddr($syslogcfg['sourceip']) ? $syslogcfg['sourceip'] : get_interface_ipv6($syslogcfg['sourceip']);
+				if (!is_ipaddr($ifaddr))
+					$ifaddr = get_interface_ip($syslogcfg['sourceip']);
+			} else {
+				$ifaddr = is_ipaddr($syslogcfg['sourceip']) ? $syslogcfg['sourceip'] : get_interface_ip($syslogcfg['sourceip']);
+				if (!is_ipaddr($ifaddr))
+					$ifaddr = get_interface_ipv6($syslogcfg['sourceip']);
+			}
+			if (is_ipaddr($ifaddr)) {
+				$sourceip = "-b {$ifaddr}";
+			}
+		}
+
+		$retval = mwexec_bg("/usr/sbin/syslogd -s -c -c -l {$g['dhcpd_chroot_path']}/var/run/log -f {$g['varetc_path']}/syslog.conf {$sourceip}");
 
 	} else {
 		$retval = mwexec_bg("/usr/sbin/syslogd -s -c -c -l {$g['dhcpd_chroot_path']}/var/run/log");
@@ -966,11 +982,6 @@ function system_generate_lighty_config($filename,
 			$max_php_children = 1;
 	}
 
-	if ($captive_portal !== false)
-		$fast_cgi_path = "{$g['tmp_path']}/php-fastcgi-{$captive_portal}.socket";
-	else
-		$fast_cgi_path = "{$g['tmp_path']}/php-fastcgi.socket";
-
 	if(!isset($config['syslog']['nologlighttpd'])) {
 		$lighty_use_syslog = <<<EOD
 ## where to send error-messages to
@@ -979,7 +990,9 @@ EOD;
 	}
 
 
-	$fastcgi_config = <<<EOD
+	if ($captive_portal !== false) {
+		$fast_cgi_path = "{$g['tmp_path']}/php-fastcgi-{$captive_portal}.socket";
+		$fastcgi_config = <<<EOD
 #### fastcgi module
 ## read fastcgi.txt for more info
 fastcgi.server = ( ".php" =>
@@ -997,6 +1010,23 @@ fastcgi.server = ( ".php" =>
 )
 
 EOD;
+	} else {
+		$fast_cgi_path = "{$g['varrun_path']}/php-fpm.socket";
+		$fastcgi_config = <<<EOD
+#### fastcgi module
+## read fastcgi.txt for more info
+fastcgi.server = ( ".php" =>
+	( "localhost" =>
+		(
+			"socket" => "{$fast_cgi_path}",
+			"broken-scriptfilename" => "enable"
+		)
+	)
+)
+
+EOD;
+	}
+
 
 	$lighty_config = <<<EOD
 #
@@ -1257,7 +1287,17 @@ function system_timezone_configure() {
 
 	/* extract appropriate timezone file */
 	$timezone = $syscfg['timezone'];
-	if (!$timezone)
+	if ($timezone) {
+		exec('/usr/bin/tar -tvzf /usr/share/zoneinfo.tgz', $tzs);
+		foreach ($tzs as $tz) {
+			if (preg_match(",{$timezone}$,", $tz))
+				break;
+			if (preg_match(",{$timezone} link to *(.*)$,", $tz, $matches)) {
+				$timezone = $matches[1];
+				break;
+			}
+		}
+	} else
 		$timezone = "Etc/UTC";
 
 	conf_mount_rw();
@@ -1342,14 +1382,14 @@ function system_ntp_configure($start_ntpd=true) {
 	foreach (explode(' ', $config['system']['timeservers']) as $ts)
 		$ntpcfg .= "server {$ts} iburst maxpoll 9\n";
 
-	$ntpcfg .= "enable monitor\n";
+	$ntpcfg .= "disable monitor\n";
 	$ntpcfg .= "enable stats\n";
 	$ntpcfg .= "statistics clockstats\n";
 	$ntpcfg .= "statsdir {$statsdir}\n";
 	$ntpcfg .= "logconfig =syncall +clockall\n";
 	$ntpcfg .= "driftfile {$driftfile}\n";
-	$ntpcfg .= "restrict default kod nomodify notrap nopeer\n";
-	$ntpcfg .= "restrict -6 default kod nomodify notrap nopeer\n";
+	$ntpcfg .= "restrict default kod limited nomodify notrap nopeer\n";
+	$ntpcfg .= "restrict -6 default kod limited nomodify notrap nopeer\n";
 
 	if (empty($config['ntpd']['interface']))
 		if (is_array($config['installedpackages']['openntpd']) && !empty($config['installedpackages']['openntpd']['config'][0]['interface']))
@@ -1390,7 +1430,7 @@ function system_ntp_configure($start_ntpd=true) {
 		exec("/bin/mkdir -p /var/empty && chmod ug+rw /var/empty/.");
 
 	/* start opentpd, set time now and use /var/etc/ntpd.conf */
-	mwexec("/usr/local/bin/ntpd -g -c {$g['varetc_path']}/ntpd.conf -p {$g['varrun_path']}/ntpd.pid", false, true);
+	mwexec("/usr/local/sbin/ntpd -g -c {$g['varetc_path']}/ntpd.conf -p {$g['varrun_path']}/ntpd.pid", false, true);
 	
 	// Note that we are starting up
 	log_error("NTPD is starting up.");
@@ -1405,7 +1445,7 @@ function sync_system_time() {
 
 	/* foreach through servers and write out to ntpd.conf */
 	foreach (explode(' ', $config['system']['timeservers']) as $ts) {
-		mwexec("/usr/local/bin/ntpdate -s $ts");
+		mwexec("/usr/local/sbin/ntpdate -s $ts");
 	}
 	
 	if ($g['booting'])

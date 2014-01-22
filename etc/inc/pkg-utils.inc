@@ -198,12 +198,11 @@ function get_pkg_internal_name($package) {
 function get_pkg_info($pkgs = 'all', $info = 'all') {
 	global $g;
 
-	$freebsd_version = php_uname("r");
 	$freebsd_machine = php_uname("m");
 	$params = array(
 		"pkg" => $pkgs, 
 		"info" => $info, 
-		"freebsd_version" => $freebsd_version[0],
+		"freebsd_version" => get_freebsd_version(),
 		"freebsd_machine" => $freebsd_machine
 	);
 	$resp = call_pfsense_method('pfsense.get_pkgs', $params, 10);
@@ -213,11 +212,10 @@ function get_pkg_info($pkgs = 'all', $info = 'all') {
 function get_pkg_sizes($pkgs = 'all') {
 	global $config, $g;
 
-	$freebsd_version = php_uname("r");
 	$freebsd_machine = php_uname("m");
 	$params = array(
 		"pkg" => $pkgs, 
-		"freebsd_version" => $freebsd_version,
+		"freebsd_version" => get_freebsd_version(),
 		"freebsd_machine" => $freebsd_machine
 	);
 	$msg = new XML_RPC_Message('pfsense.get_pkg_sizes', array(php_value_to_xmlrpc($params)));
@@ -1336,9 +1334,9 @@ function stop_packages() {
 		}
 	}
 
-	$shell = @popen("/bin/sh", "w");
-	if ($shell) {
-		foreach ($rcfiles as $rcfile => $number) {
+	foreach ($rcfiles as $rcfile => $number) {
+		$shell = @popen("/bin/sh", "w");
+		if ($shell) {
 			echo " Stopping {$rcfile}...";
 			if (!@fwrite($shell, "{$rcfile} stop >>/tmp/bootup_messages 2>&1")) {
 				if ($shell)
@@ -1346,9 +1344,8 @@ function stop_packages() {
 				$shell = @popen("/bin/sh", "w");
 			}
 			echo "done.\n";
+			pclose($shell);
 		}
-
-		pclose($shell);
 	}
 }
 

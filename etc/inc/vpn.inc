@@ -613,9 +613,10 @@ function vpn_ipsec_configure($ipchg = false)
 
 					$racoonconf .=<<<EOD
 
-remote {$rgip}
+remote "{$rgip}"
 {
 	ph1id {$ikeid};
+	remote_address {$rgip};
 	exchange_mode {$ph1ent['mode']};
 	my_identifier {$myid_type} {$myid_data};
 	{$peerid_spec}
@@ -827,7 +828,7 @@ EOD;
 		$natfilterrules = false;
 		if (is_array($a_phase2) && count($a_phase2)) {
 			/* Try to prevent people from locking themselves out of webgui. Just in case. */
-			if ($config['interfaces']['lan']) {
+			if (!isset($config['system']['noinstalllanspd']) && $config['interfaces']['lan']) {
 				$lanip = get_interface_ip("lan");
 				if (!empty($lanip) && is_ipaddrv4($lanip)) {
 					$lansn = get_interface_subnet("lan");
@@ -905,22 +906,21 @@ EOD;
 				}
 
 				/* static route needed? */
+				$vip = "";
 				if (is_ipaddr($ph1ent['interface'])) {
 					$vip = find_virtual_ip_alias($ph1ent['interface']);
-					if (preg_match("/^carp|^[a-z0-9]+_vip/i", $vip['interface']))
-						$parentinterface = link_carp_interface_to_parent($vip['interface']);
-					else
-						$parentinterface = $vip['interface'];
-				} else if (preg_match("/^carp|^[a-z0-9]+_vip/i", $ph1ent['interface']))
-					$parentinterface = link_carp_interface_to_parent($ph1ent['interface']);
-				else
+					$parentinterface = $vip['interface'];
+				} else
 					$parentinterface = $ph1ent['interface'];
 
 				if (is_ipaddr($rgip)) {
 					/* add endpoint routes to correct gateway on interface */
 					if (interface_has_gateway($parentinterface)) {
 						$gatewayip = get_interface_gateway("$parentinterface");
-						$interfaceip = get_interface_ip($parentinterface);
+						if (empty($vip))
+							$interfaceip = get_interface_ip($parentinterface);
+						else
+							$interfaceip = $vip['subnet'];
 						$subnet_bits = get_interface_subnet($parentinterface);
 						$subnet_ip = gen_subnet("{$interfaceip}", "{$subnet_bits}");
 						/* if the remote gateway is in the local subnet, then don't add a route */

@@ -613,6 +613,14 @@ if ($_POST['apply']) {
 			if (is_ipaddr_configured($_POST['ipaddr'], $if, true))
 				$input_errors[] = gettext("This IPv4 address is being used by another interface or VIP.");
 
+			/* Do not accept network or broadcast address, except if subnet is 31 or 32 */
+			if ($_POST['subnet'] < 31) {
+				if ($_POST['ipaddr'] == gen_subnet($_POST['ipaddr'], $_POST['subnet']))
+					$input_errors[] = gettext("This IPv4 address is the network address and cannot be used");
+				else if ($_POST['ipaddr'] == gen_subnet_max($_POST['ipaddr'], $_POST['subnet']))
+					$input_errors[] = gettext("This IPv4 address is the broadcast address and cannot be used");
+			}
+
 			foreach ($staticroutes as $route_subnet) {
 				list($network, $subnet) = explode("/", $route_subnet);
 				if ($_POST['subnet'] == $subnet && $network == gen_subnet($_POST['ipaddr'], $_POST['subnet'])) {
@@ -690,17 +698,15 @@ if ($_POST['apply']) {
 		$input_errors[] = gettext("A valid MAC address must be specified.");
 	if ($_POST['mtu']) {
 		if ($_POST['mtu'] < 576 || $_POST['mtu'] > 9000)
-			$input_errors[] = gettext("The MTU must be greater than 576 bytes.");
+			$input_errors[] = gettext("The MTU must be greater than 576 bytes and less than 9000.");
 
 		if (stristr($wancfg['if'], "_vlan")) {
 			$realhwif_array = get_parent_interface($wancfg['if']);
 			// Need code to handle MLPPP if we ever use $realhwif for MLPPP handling
 			$parent_realhwif = $realhwif_array[0];
 			$parent_if = convert_real_interface_to_friendly_interface_name($parent_realhwif);
-			if (!empty($parent_if) && isset($config['interfaces'][$parent_if]['mtu'])) {
-				$parent_mtu = $config['interfaces'][$parent_if]['mtu'];
-
-				if ($_POST['mtu'] > $parent_mtu)
+			if (!empty($parent_if) && !empty($config['interfaces'][$parent_if]['mtu'])) {
+				if ($_POST['mtu'] > intval($config['interfaces'][$parent_if]['mtu']))
 					$input_errors[] = gettext("MTU of a vlan should not be bigger than parent interface.");
 			}
 		} else {

@@ -1514,7 +1514,7 @@ msgid "Could not write Igmpproxy configuration file!"
 msgstr "O arquivo de configuração do Igmpproxy não pôde ser escrito!"
 
 #: etc/inc/services.inc:956
-msgid "Started Igmpproxy service sucsesfully."
+msgid "Started Igmpproxy service successfully."
 msgstr "Serviço Igmpproxy iniciado com sucesso."
 
 #: etc/inc/services.inc:980 etc/inc/services.inc:1109
@@ -8430,7 +8430,7 @@ msgstr "adicionar outra entrada"
 #: usr/local/www/firewall_shaper_vinterface.php:102
 msgid ""
 "This pipe/queue is referenced in filter rules, please remove references from "
-"there before deleteing."
+"there before deleting."
 msgstr ""
 "O pipe/fila é referenciado em regras de firewall, por favor remova estas "
 "referências antes de apagar."

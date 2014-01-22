@@ -79,7 +79,8 @@ function write_rcfile($params) {
 	/* begin rcfile logic */
 	$towrite .= "case \$1 in\n\tstart)\n\t\trc_start\n\t\t;;\n\tstop)\n\t\trc_stop\n\t\t;;\n\trestart)\n\t\trc_stop\n\t\trc_start\n\t\t;;\nesac\n\n";
 
-	file_put_contents($rcfile_fullname, $towrite);
+	@file_put_contents($rcfile_fullname, $towrite);
+	unset($towrite);
 	@chmod("{$rcfile_fullname}", 0755);
 
 	return;
@@ -91,16 +92,7 @@ function start_service($name) {
 	if (empty($name))
 		return;
 
-	/* make sure service is stopped before starting */
-	stop_service($name);
-	sleep(2);
-
-	$rcfile_fullname = RCFILEPREFIX . $name . '.sh';
-	if(file_exists($rcfile_fullname)) {
-		mwexec_bg("/bin/sh {$rcfile_fullname} start");
-		return;
-	}
-	if($config['installedpackages']['service']) {
+	if (is_array($config['installedpackages']) && is_array($config['installedpackages']['service'])) {
 		foreach($config['installedpackages']['service'] as $service) {
 			if(strtolower($service['name']) == strtolower($name)) {
 				if($service['rcfile']) {
@@ -126,7 +118,7 @@ function stop_service($name) {
 	if (empty($name))
 		return;
 
-	if ($config['installedpackages']['service']) {
+	if (is_array($config['installedpackages']) && is_array($config['installedpackages']['service'])) {
 		foreach($config['installedpackages']['service'] as $service) {
 			if(strtolower($service['name']) == strtolower($name)) {
 				if($service['rcfile']) {
@@ -142,18 +134,10 @@ function stop_service($name) {
 				if (!empty($service['stopcmd']))
 					eval($service['stopcmd']);
 
-				if(!($service['rcfile'] or $service['stopcmd'])) {
-					if(is_process_running("{$service['executable']}"))
-						mwexec("/usr/bin/killall {$service['executable']}");
-					return;
-				}
 				break;
 			}
 		}
 	}
-	/* finally if we get here lets simply kill the service name */
-	if(is_process_running("{$name}"))
-		mwexec("/usr/bin/killall {$name}");
 }
 
 function restart_service($name) {
@@ -165,7 +149,7 @@ function restart_service($name) {
 	stop_service($name);
 	start_service($name);
 
-	if($config['installedpackages']['service']) {
+	if (is_array($config['installedpackages']) && is_array($config['installedpackages']['service'])) {
 		foreach($config['installedpackages']['service'] as $service) {
 			if(strtolower($service['name']) == strtolower($name)) {
 				if($service['restartcmd']) {
@@ -348,6 +332,13 @@ function get_services() {
 		$services[] = $pconfig;
 	}
 
+	if (isset($config['system']['enablesshd'])) {
+		$pconfig = array();
+		$pconfig['name'] = "sshd";
+		$pconfig['description'] = gettext("Secure Shell Daemon");
+		$services[] = $pconfig;
+	}
+
 	foreach (array('server', 'client') as $mode) {
 		if (is_array($config['openvpn']["openvpn-{$mode}"])) {
 			foreach ($config['openvpn']["openvpn-{$mode}"] as $id => $setting) {
@@ -442,23 +433,19 @@ function get_service_status_icon($service, $withtext = true, $smallicon = false)
 	$output = "";
 	if(get_service_status($service)) {
 		$statustext = gettext("Running");
-		$output .= '<td class="listr" align="center">' . "\n";
 		$output .= "<img style=\"vertical-align:middle\" title=\"" . sprintf(gettext("%s Service is"),$service["name"]) . " {$statustext}\" src=\"/themes/" . $g["theme"] . "/images/icons/";
 		$output .= ($smallicon) ? "icon_pass.gif" : "icon_service_running.gif";
-		$output .= "\" alt=\"status\" />";
+		$output .= "\" alt=\"status\" />&nbsp;";
 		if ($withtext)
-			$output .= "&nbsp;&nbsp;" . $statustext;
-		$output .= "</td>\n";
+			$output .= "&nbsp;" . $statustext;
 	} else {
 		$service_enabled = is_service_enabled($service['name']);
 		$statustext = ($service_enabled) ? gettext("Stopped") : gettext("Disabled");
-		$output .= '<td class="listbg" align="center">' . "\n";
 		$output .= "<img style=\"vertical-align:middle\" title=\"" . sprintf(gettext("%s Service is"),$service["name"]) . " {$statustext}\" src=\"/themes/" . $g["theme"] . "/images/icons/";
 		$output .= ($smallicon) ? "icon_block.gif" : "icon_service_stopped.gif";
-		$output .= "\" alt=\"status\" />";
+		$output .= "\" alt=\"status\" />&nbsp;";
 		if ($withtext)
-			$output .= "&nbsp;&nbsp;" . "<font color=\"white\">{$statustext}</font>";
-		$output .= "</td>\n";
+			$output .= "&nbsp;<font color=\"white\">{$statustext}</font>";
 	}
 	return $output;
 }
@@ -550,6 +537,9 @@ function service_control_start($name, $extras) {
 			break;
 		case 'racoon':
 			vpn_ipsec_force_reload();
+			break;
+		case 'sshd':
+			send_event("service restart sshd");
 			break;
 		case 'openvpn':
 			$vpnmode = isset($extras['vpnmode']) ? $extras['vpnmode'] : $extras['mode'];
@@ -679,6 +669,9 @@ function service_control_restart($name, $extras) {
 			break;
 		case 'racoon':
 			vpn_ipsec_force_reload();
+			break;
+		case 'sshd':
+			send_event("service restart sshd");
 			break;
 		case 'openvpn':
 			$vpnmode = $extras['vpnmode'];

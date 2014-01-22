@@ -29,6 +29,7 @@
 	 *    - CloudFlare (www.cloudflare.com)
  	 *    - Eurodns (eurodns.com)
  	 *    - GratisDNS (gratisdns.dk)
+     *    - City Network (citynetwork.se)
 	 * +----------------------------------------------------+
 	 *  Requirements:
 	 *    - PHP version 4.0.2 or higher with the CURL Library and the PCRE Library
@@ -69,6 +70,8 @@
 	 *  CloudFlare     - Last Tested: 30 May 2013
   	 *  Eurodns	   - Last Tested: 27 June 2013
   	 *  GratisDNS      - Last Tested: 15 August 2012
+	 *  OVH DynHOST	   - Last Tested: NEVER
+     *  City Network   - Last Tested: 13 November 2013
 	 * +====================================================+
 	 *
 	 * @author 	E.Kristensen
@@ -236,6 +239,8 @@
 				case 'cloudflare':
 				case 'eurodns':
 				case 'gratisdns':
+				case 'ovh-dynhost':
+                case 'citynetwork':
 					$this->_update();
 					if($this->_dnsDummyUpdateDone == true) {
 						// If a dummy update was needed, then sleep a while and do the update again to put the proper address back.
@@ -640,6 +645,35 @@
 					list($hostname, $domain) = explode(".", $this->_dnsHost, 2);
 					curl_setopt($ch, CURLOPT_URL, $server . '?u=' . $this->_dnsUser . '&p=' . $this->_dnsPass . '&h=' . $this->_dnsHost . '&d=' . $domain);
 					break;
+				case 'ovh-dynhost':
+					$needsIP = FALSE;
+					if ($this->_dnsVerboseLog)
+						log_error("OVH DynHOST: ({$this->_dnsHost}) DNS update() starting.");
+					if (isset($this->_dnsWildcard) && $this->_dnsWildcard != "OFF") $this->_dnsWildcard = "ON";
+					curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+					curl_setopt($ch, CURLOPT_USERPWD, $this->_dnsUser.':'.$this->_dnsPass);
+					$server = "https://www.ovh.com/nic/update";
+					$port = "";
+					if($this->_dnsServer)
+						$server = $this->_dnsServer;
+					if($this->_dnsPort)
+						$port = ":" . $this->_dnsPort;
+					curl_setopt($ch, CURLOPT_URL, $server .$port . '?system=dyndns&hostname=' . $this->_dnsHost . '&myip=' . $this->_dnsIP . '&wildcard='.$this->_dnsWildcard . '&mx=' . $this->_dnsMX . '&backmx=NO');
+					break;
+				case 'citynetwork':
+					$needsIP = TRUE;
+					if ($this->_dnsVerboseLog)
+						log_error("City Network: ({$this->_dnsHost}) DNS update() starting.");
+					curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+					curl_setopt($ch, CURLOPT_USERPWD, $this->_dnsUser.':'.$this->_dnsPass);
+					$server = 'https://dyndns.citynetwork.se/nic/update';
+					$port = "";
+					if($this->_dnsServer)
+						$server = $this->_dnsServer;
+					if($this->_dnsPort)
+						$port = ":" . $this->_dnsPort;
+					curl_setopt($ch, CURLOPT_URL, $server .$port . '?hostname=' . $this->_dnsHost . '&myip=' . $this->_dnsIP);
+					break;
 				default:
 					break;
 			}
@@ -689,6 +723,26 @@
 						$this->_debug($data);
 					}
 					break;
+				case 'citynetwork':
+					if (preg_match('/notfqdn/i', $data)) {
+						$status = "phpDynDNS ({$this->_dnsHost}): (Error) Not A FQDN!";
+					} else if (preg_match('/nohost/i', $data)) {
+						$status = "phpDynDNS ({$this->_dnsHost}): (Error) No such host";
+					} else if (preg_match('/nochg/i', $data)) {
+						$status = "phpDynDNS ({$this->_dnsHost}): (Success) No Change In IP Address";
+						$successful_update = true;
+					} else if (preg_match('/good/i', $data)) {
+						$status = "phpDynDNS ({$this->_dnsHost}): (Success) IP Address Changed Successfully! (".$this->_dnsIP.")";
+						$successful_update = true;
+					} else if (preg_match('/badauth/i', $data)) {
+						$status = "phpDynDNS ({$this->_dnsHost}): (Error) User Authorization Failed";
+					} else {
+						$status = "phpDynDNS ({$this->_dnsHost}): (Unknown Response)";
+						log_error("phpDynDNS ({$this->_dnsHost}): PAYLOAD: {$data}");
+						$this->_debug($data);
+					}
+					break;
+				case 'ovh-dynhost':
 				case 'dyndns':
 					if (preg_match('/notfqdn/i', $data)) {
 						$status = "phpDynDNS ({$this->_dnsHost}): (Error) Not A FQDN!";
