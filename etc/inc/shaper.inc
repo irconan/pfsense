@@ -1030,8 +1030,6 @@ class priq_queue {
 		}
 	}
 
-	function find_parentqueue($interface, $qname) { return; }
-
 	function validate_input($data, &$input_errors) {
 
 		$reqdfields[] = "name";
